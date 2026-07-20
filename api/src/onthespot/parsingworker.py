@@ -187,7 +187,7 @@ class ParsingWorker:
             download_queue[item["local_id"]] = item
         pending.put_nowait(item)
 
-    def _expand_spotify_playlist(self, token, playlist_id):
+    def _expand_spotify_playlist(self, token, item_url, playlist_id):  # Added item_url
         try:
             items = spotify_get_playlist_items(token, playlist_id)
             playlist_name, playlist_by = spotify_get_playlist_data(token, playlist_id)
