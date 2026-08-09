@@ -78,6 +78,21 @@ const AccountsManager = lazy(() =>
     default: module.AccountsManager,
   })),
 );
+const PlaylistAutomationPage = lazy(() =>
+  import("./components/PlaylistAutomationPage").then((module) => ({
+    default: module.PlaylistAutomationPage,
+  })),
+);
+const LibraryPage = lazy(() =>
+  import("./components/LibraryPage").then((module) => ({
+    default: module.LibraryPage,
+  })),
+);
+const StatisticsPanel = lazy(() =>
+  import("./components/StatisticsPanel").then((module) => ({
+    default: module.StatisticsPanel,
+  })),
+);
 const DiagnosticsPanel = lazy(() =>
   import("./components/DiagnosticsPanel").then((module) => ({
     default: module.DiagnosticsPanel,
@@ -303,6 +318,7 @@ const initialTabFromLocation = (): NavTab => {
   const tab = new URLSearchParams(window.location.search).get("tab");
   const validTabs: NavTab[] = [
     "dashboard",
+    "playlist-automation",
     "queue",
     "settings",
     "accounts",
@@ -878,6 +894,16 @@ export default function App() {
               accounts={accounts}
               query={searchQuery}
               onQueryChange={setSearchQuery}
+            />
+          )}
+
+          {activeTab === "playlist-automation" && (
+            <PlaylistAutomationPage
+              onOpenApiConfig={() => {
+                setSettingsSection("search");
+                setActiveTab("settings");
+              }}
+              onDownloadPlaylist={handleDownloadItem}
             />
           )}
 

@@ -19,16 +19,23 @@ import { translate, type TranslationKey } from "../lib/i18n";
 
 export type NavTab =
   | "dashboard"
+  | "playlist-automation"
   | "queue"
+  | "library"
+  | "statistics"
   | "settings"
   | "accounts"
   | "diagnostics"
   | "logs";
-type WorkspaceTab = "dashboard" | "queue";
+type WorkspaceTab = "dashboard" | "playlist-automation" | "queue";
 type ManageTab = "accounts" | "diagnostics" | "logs" | "settings";
 type ManageItem = ManageTab | "notifications";
 
-const WORKSPACE_TABS: WorkspaceTab[] = ["dashboard", "queue"];
+const WORKSPACE_TABS: WorkspaceTab[] = [
+  "dashboard",
+  "playlist-automation",
+  "queue",
+];
 const MANAGE_TABS: ManageItem[] = [
   "accounts",
   "diagnostics",
@@ -49,6 +56,11 @@ const NAV_DETAILS: Record<
     label: "Search & discover",
     labelKey: "search_discover",
     icon: Search,
+  },
+  "playlist-automation": {
+    label: "Playlist sorting",
+    labelKey: "playlist_sorting",
+    icon: ListMusic,
   },
   queue: {
     label: "Download queue",

@@ -292,13 +292,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         if (themes && typeof themes === "object") {
           const bundle = themes as Record<string, unknown>;
           if (typeof bundle.preset === "string")
-            window.localStorage.setItem("ots-theme-preset", bundle.preset);
+            window.localStorage.setItem("ots-theme-preset", String(bundle.preset));
           if (typeof bundle.mode === "string")
-            window.localStorage.setItem("ots-theme-mode", bundle.mode);
+            window.localStorage.setItem("ots-theme-mode", String(bundle.mode));
           if (typeof bundle.custom === "string")
-            window.localStorage.setItem("ots-custom-theme", bundle.custom);
+            window.localStorage.setItem("ots-custom-theme", String(bundle.custom));
           if (typeof bundle.saved === "string")
-            window.localStorage.setItem("ots-custom-themes", bundle.saved);
+            window.localStorage.setItem("ots-custom-themes", String(bundle.saved));
         }
         window.location.reload();
       }
