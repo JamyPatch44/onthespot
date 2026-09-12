@@ -438,7 +438,16 @@ app = FastAPI(
 # Production requests are same-origin because FastAPI serves the UI. Vite's
 # local development origins remain enabled, and operators can add explicit
 # cross-origin frontends with a comma-separated ONTHESPOT_CORS_ORIGINS value.
-cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+cors_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:3002",
+    "http://127.0.0.1:3002",
+    "http://localhost:3003",
+    "http://127.0.0.1:3003",
+]
 cors_origins.extend(
     origin.strip()
     for origin in os.environ.get("ONTHESPOT_CORS_ORIGINS", "").split(",")

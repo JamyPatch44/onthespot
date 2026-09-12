@@ -7,8 +7,8 @@ automation needs a Spotify user token with playlist modification scopes.
 
 from __future__ import annotations
 
-import csv
 import copy
+import csv
 import hashlib
 import io
 import json
@@ -23,10 +23,11 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import requests
 
-from .otsconfig import config
-from .runtimedata import get_rate_limit_delay, record_rate_limit
 from .export_locations import playlist_backup_directory
+from .otsconfig import config
+from .runtimedata import get_logger, get_rate_limit_delay, record_rate_limit
 
+logger = get_logger("playlist_automation")
 
 BASE_URL = "https://api.spotify.com/v1"
 AUTH_URL = "https://accounts.spotify.com/authorize"
@@ -328,7 +329,11 @@ class PlaylistAutomation:
                 detail = str(response.json().get("error", {}).get("message", ""))
             except (ValueError, AttributeError):
                 detail = response.text[:200]
-            raise PlaylistAutomationError(f"Spotify API error ({response.status_code}){': ' + detail if detail else ''}")
+            context = f" during {method} {path}"
+            raise PlaylistAutomationError(
+                f"Spotify API error ({response.status_code}){context}"
+                f"{': ' + detail if detail else ''}"
+            )
         if response.status_code == 204 or not response.content:
             if method != "GET":
                 self._clear_read_cache()
@@ -388,6 +393,7 @@ class PlaylistAutomation:
         return {
             "id": track.get("id", ""),
             "uri": track.get("uri", ""),
+            "is_local": bool(track.get("is_local")),
             "name": track.get("name", ""),
             "artist": ", ".join(str(artist.get("name", "")) for artist in artists),
             "album": album.get("name", ""),
@@ -419,16 +425,44 @@ class PlaylistAutomation:
                 track["danceability"] = float(feature.get("danceability", 0) or 0)
                 track["valence"] = float(feature.get("valence", 0) or 0)
 
-    def playlist_tracks(self, playlist_id: str) -> list[dict[str, Any]]:
+    def playlist_tracks(self, playlist_id: str, include_local: bool = False) -> list[dict[str, Any]]:
         tracks: list[dict[str, Any]] = []
         offset = 0
+        fields = (
+            "items(added_at,is_local,"
+            "track(id,uri,is_local,name,duration_ms,explicit,popularity,"
+            "track_number,disc_number,artists,album),"
+            "item(id,uri,is_local,name,duration_ms,explicit,popularity,"
+            "track_number,disc_number,artists,album)),next,total"
+        )
         while True:
-            payload = self._request("GET", f"/playlists/{playlist_id}/items", params={"limit": 100, "offset": offset, "fields": "items(added_at,track(id,uri,name,duration_ms,explicit,popularity,track_number,disc_number,artists,album)),next,total"})
-            for item in payload.get("items", []) or []:
-                track = item.get("track") or {}
-                if not track.get("uri") or track.get("is_local"):
+            payload = self._request(
+                "GET",
+                f"/playlists/{playlist_id}/items",
+                params={"limit": 100, "offset": offset, "fields": fields},
+            )
+            for item_index, item in enumerate(payload.get("items", []) or []):
+                # Spotify has returned playlist entries as both `track` and
+                # `item` over time. Local files can also expose their local
+                # status on the playlist item rather than the nested track.
+                track = item.get("track") or item.get("item") or {}
+                is_local = bool(
+                    item.get("is_local")
+                    or track.get("is_local")
+                    or str(track.get("uri") or "").startswith("spotify:local:")
+                )
+                if not track.get("uri") or (is_local and not include_local):
                     continue
-                tracks.append(self._track_from_payload(track, item.get("added_at", "")))
+                if is_local and not track.get("is_local"):
+                    track = {**track, "is_local": True}
+                row = self._track_from_payload(track, item.get("added_at", ""))
+                # Keep the real playlist position.  It matters when a playlist
+                # contains local files because Spotify's mutation API only
+                # accepts remote track IDs, so remote entries must be deleted
+                # by their original positions before the local entries are
+                # left in place.
+                row["_playlist_position"] = offset + item_index
+                tracks.append(row)
             if not payload.get("next"):
                 break
             offset += len(payload.get("items", []) or [])
@@ -438,7 +472,12 @@ class PlaylistAutomation:
     @staticmethod
     def _version_key(track: dict[str, Any]) -> str:
         value = f"{track.get('artist', '')} {track.get('name', '')}".casefold()
-        value = re.sub(r"[\[(](?:\d{4}\s*)?(?:\d{2,4}\s*)?(?:remaster(?:ed)?|deluxe(?: edition)?|anniversary edition|radio edit|explicit version|album version)[^\])]*[\])", "", value)
+        version_pattern = (
+            r"[\[(](?:\d{4}\s*)?(?:\d{2,4}\s*)?"
+            r"(?:remaster(?:ed)?|deluxe(?: edition)?|anniversary edition|"
+            r"radio edit|explicit version|album version)[^\]\)]*[\]\)]"
+        )
+        value = re.sub(version_pattern, "", value)
         value = re.sub(r"\s[-–]\s*(?:\d{4}\s*)?(?:remaster(?:ed)?|deluxe(?: edition)?|anniversary edition|radio edit|explicit version|album version)\b.*$", "", value)
         return re.sub(r"\s+", " ", value).strip()
 
@@ -472,19 +511,44 @@ class PlaylistAutomation:
         result = list(tracks)
         normalized = [rule for rule in rules if isinstance(rule, dict) and rule.get("field")]
         for rule in reversed(normalized):
-            result.sort(key=lambda track, field=str(rule.get("field")): self._sort_value(track, field), reverse=bool(rule.get("descending")))
+            field = str(rule.get("field"))
+            descending = bool(rule.get("descending"))
+            result.sort(
+                key=lambda track: self._sort_value(track, field),
+                reverse=descending,
+            )
         return result
 
+    @staticmethod
+    def _normalise_playlist_ids(value: Any) -> list[str]:
+        """Return a stable, de-duplicated list of playlist IDs.
+
+        Older exported configurations could contain one ID as a string. Treat
+        that as one playlist instead of iterating over its characters, and
+        preserve every selected source in the order the user chose it.
+        """
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple, set)):
+            return []
+        return list(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))
+
     def scan(self, body: dict[str, Any]) -> dict[str, Any]:
-        playlist_ids = [str(value) for value in body.get("playlist_ids", []) if value]
+        playlist_ids = self._normalise_playlist_ids(body.get("playlist_ids", []))
         if not playlist_ids:
             raise PlaylistAutomationError("Select at least one source playlist")
         playlists = {row["id"]: row for row in self.playlists()}
         tracks: list[dict[str, Any]] = []
         source_names: dict[str, list[str]] = {}
+        source_ids_by_track: dict[str, list[str]] = {}
+        source_playlists: list[dict[str, Any]] = []
+        missing = [playlist_id for playlist_id in playlist_ids if playlist_id not in playlists]
+        if missing:
+            raise PlaylistAutomationError(
+                "The configured source playlist(s) could not be found: "
+                + ", ".join(missing)
+            )
         for playlist_id in playlist_ids:
-            if playlist_id not in playlists:
-                continue
             source_name = playlists[playlist_id]["name"]
             source_tracks = self.playlist_tracks(playlist_id)
             sample_per_source = body.get("sample_per_source")
@@ -493,10 +557,21 @@ class PlaylistAutomation:
                     source_tracks = source_tracks[:max(1, int(sample_per_source))]
                 except (TypeError, ValueError):
                     pass
+            source_playlists.append({
+                "id": playlist_id,
+                "name": source_name,
+                "track_count": len(source_tracks),
+            })
             for track in source_tracks:
                 track["source_playlist_id"] = playlist_id
                 track["source_playlist"] = source_name
-                source_names.setdefault(track["id"], []).append(source_name)
+                track_key = str(track.get("id") or track.get("uri") or "")
+                names = source_names.setdefault(track_key, [])
+                if source_name not in names:
+                    names.append(source_name)
+                mapped_source_ids = source_ids_by_track.setdefault(track_key, [])
+                if playlist_id not in mapped_source_ids:
+                    mapped_source_ids.append(playlist_id)
                 tracks.append(track)
         if body.get("include_liked_songs"):
             offset = 0
@@ -510,7 +585,10 @@ class PlaylistAutomation:
                     normalised = self._track_from_payload(track, item.get("added_at", ""))
                     normalised["source_playlist_id"] = "liked-songs"
                     normalised["source_playlist"] = "Liked Songs"
-                    source_names.setdefault(normalised["id"], []).append("Liked Songs")
+                    track_key = str(normalised.get("id") or normalised.get("uri") or "")
+                    names = source_names.setdefault(track_key, [])
+                    if "Liked Songs" not in names:
+                        names.append("Liked Songs")
                     tracks.append(normalised)
                 if not payload.get("next"):
                     break
@@ -570,10 +648,24 @@ class PlaylistAutomation:
             tracks = [track for track in tracks if not any(keyword in f"{track.get('name', '')} {track.get('artist', '')}".casefold() for keyword in exclusions)]
         if body.get("sort_enabled", True):
             tracks = self._sort_tracks(tracks, body.get("sort_rules") or DEFAULT_SORT_RULES)
+        source_ids = {str(source["id"]) for source in source_playlists}
+        included_by_source: dict[str, int] = {}
         for track in tracks:
-            track["source_playlists"] = source_names.get(track.get("id", ""), [])
+            track_key = str(track.get("id") or track.get("uri") or "")
+            contributing_source_ids = source_ids_by_track.get(track_key, [])
+            for source_id in contributing_source_ids:
+                if source_id in source_ids:
+                    included_by_source[source_id] = included_by_source.get(source_id, 0) + 1
+            track["source_playlists"] = source_names.get(track_key, []) or (
+                [track["source_playlist"]] if track.get("source_playlist") else []
+            )
+        for source in source_playlists:
+            included = included_by_source.get(source["id"], 0)
+            source["included_track_count"] = included
+            source["excluded_track_count"] = max(0, int(source.get("track_count", 0)) - included)
         return {
             "source_playlist_count": len(playlist_ids),
+            "source_playlists": source_playlists,
             "original_count": original_count,
             "track_count": len(tracks),
             "duplicates_removed": duplicates_removed,
@@ -597,7 +689,13 @@ class PlaylistAutomation:
     @classmethod
     def _version_title_key(cls, value: str) -> str:
         value = str(value or "").casefold()
-        value = re.sub(r"[\[(](?:\d{4}\s*)?(?:\d{2,4}\s*)?(?:remaster(?:ed)?|deluxe(?: edition)?|anniversary edition|radio edit|single version|explicit version|album version)[^\])]*[\])]", "", value)
+        version_pattern = (
+            r"[\[(](?:\d{4}\s*)?(?:\d{2,4}\s*)?"
+            r"(?:remaster(?:ed)?|deluxe(?: edition)?|anniversary edition|"
+            r"radio edit|single version|explicit version|album version)"
+            r"[^\]\)]*[\]\)]"
+        )
+        value = re.sub(version_pattern, "", value)
         value = re.sub(r"\s[-–]\s*(?:\d{4}\s*)?(?:\d{2,4}\s*)?(?:remaster(?:ed)?|deluxe(?: edition)?|anniversary edition|radio edit|single version|explicit version|album version)\b.*$", "", value)
         return cls._normalise_title(value)
 
@@ -640,7 +738,7 @@ class PlaylistAutomation:
         return candidates
 
     def sort_scan(self, body: dict[str, Any]) -> list[dict[str, Any]]:
-        playlist_ids = [str(value) for value in body.get("playlist_ids", []) if value]
+        playlist_ids = self._normalise_playlist_ids(body.get("playlist_ids", []))
         if not playlist_ids:
             raise PlaylistAutomationError("Select at least one playlist to sort")
         playlists = {row["id"]: row for row in self.playlists()}
@@ -716,7 +814,9 @@ class PlaylistAutomation:
         playlist_id = str(body.get("playlist_id") or "")
         if not playlist_id:
             raise PlaylistAutomationError("A playlist is required")
-        original = self.playlist_tracks(playlist_id)
+        # Applying a sort must not silently turn a playlist containing Spotify
+        # local files into a remote-only playlist.
+        original = self.playlist_tracks(playlist_id, include_local=True)
         approved = body.get("approved_changes") or []
         rejected = body.get("rejected_changes") or []
         removals: dict[str, int] = {}
@@ -741,9 +841,8 @@ class PlaylistAutomation:
             working = self._sort_tracks(working, body.get("sort_rules") or DEFAULT_SORT_RULES)
         before = [track.get("uri") for track in original if track.get("uri")]
         after = [track.get("uri") for track in working if track.get("uri")]
-        self._request("PUT", f"/playlists/{playlist_id}/items", json={"uris": after[:100]})
-        for start in range(100, len(after), 100):
-            self._request("POST", f"/playlists/{playlist_id}/items", json={"uris": after[start:start + 100]})
+        if not self._write_order_preserving_local(playlist_id, after, original):
+            self._replace_playlist_items(playlist_id, after, original)
         state = self._load_state()
         for change in rejected:
             entry = {"track_id": str(change.get("track_id") or ""), "name": str(change.get("remTitle") or ""), "artist": str(change.get("remArtist") or ""), "album": str(change.get("remAlbum") or ""), "context": "Version replacement" if change.get("type") == "replace" else "Duplicate removal", "source_playlist": playlist_id, "added_at": int(time.time())}
@@ -756,20 +855,168 @@ class PlaylistAutomation:
         self._save_state(state)
         return {"success": True, "playlist_name": playlist_name, "tracks_processed": len(after), "history_id": record["id"]}
 
-    def _write_playlist(self, playlist_id: str, uris: list[str], mode: str) -> tuple[list[str], list[str]]:
-        current_tracks = self.playlist_tracks(playlist_id)
+    def _delete_remote_items(self, playlist_id: str, current_tracks: list[dict[str, Any]]) -> None:
+        # Spotify's current playlist mutation API uses ``items``.  The old
+        # ``tracks``/``positions`` payload belonged to the removed endpoint
+        # and is rejected by the current API with "No uris provided".
+        remote_uris = [
+            str(track.get("uri") or "")
+            for track in current_tracks
+            if track.get("uri") and not track.get("is_local")
+        ]
+        for start in range(0, len(remote_uris), 100):
+            chunk = remote_uris[start:start + 100]
+            if chunk:
+                self._request(
+                    "DELETE",
+                    f"/playlists/{playlist_id}/items",
+                    json={"items": [{"uri": uri} for uri in chunk]},
+                )
+
+    def _replace_playlist_items(
+        self,
+        playlist_id: str,
+        uris: list[str],
+        current_tracks: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Replace a playlist while respecting Spotify's 100-item request limit."""
+        # Spotify local-file URIs are not valid mutation IDs. They can be
+        # preserved by _write_order_preserving_local, but must never reach a
+        # normal PUT/POST request as that produces "Invalid base62 id".
+        unique = list(
+            dict.fromkeys(
+                str(uri)
+                for uri in uris
+                if uri and not str(uri).startswith("spotify:local:")
+            )
+        )
+        if not unique:
+            # Spotify rejects an empty PUT with "No uris provided". Clear the
+            # existing remote entries explicitly, and leave an already-empty
+            # playlist untouched.
+            if current_tracks:
+                self._delete_remote_items(playlist_id, current_tracks)
+            return
+        self._request("PUT", f"/playlists/{playlist_id}/items", json={"uris": unique[:100]})
+        for start in range(100, len(unique), 100):
+            self._request(
+                "POST",
+                f"/playlists/{playlist_id}/items",
+                json={"uris": unique[start:start + 100]},
+            )
+
+    def _write_order_preserving_local(
+        self,
+        playlist_id: str,
+        desired_uris: list[str],
+        current_tracks: list[dict[str, Any]],
+    ) -> bool:
+        """Rewrite remote items without sending unsupported local URIs.
+
+        Spotify rejects ``spotify:local:`` values in playlist mutation
+        requests as invalid base62 track IDs. Delete only existing remote
+        items by position, leave local files untouched, then insert the
+        desired remote runs around the remaining local items.
+        """
+        local_tracks = [track for track in current_tracks if track.get("is_local")]
+        if not local_tracks:
+            return False
+
+        remote_uris = [
+            str(track.get("uri") or "")
+            for track in current_tracks
+            if track.get("uri") and not track.get("is_local")
+        ]
+        for start in range(0, len(remote_uris), 100):
+            chunk = remote_uris[start:start + 100]
+            if chunk:
+                self._request(
+                    "DELETE",
+                    f"/playlists/{playlist_id}/items",
+                    json={"items": [{"uri": uri} for uri in chunk]},
+                )
+
+        remaining_local_counts: dict[str, int] = {}
+        for track in local_tracks:
+            uri = str(track.get("uri") or "")
+            if uri:
+                remaining_local_counts[uri] = remaining_local_counts.get(uri, 0) + 1
+
+        local_cursor = 0
+        inserted_count = 0
+        pending_remote: list[str] = []
+
+        def insert_pending() -> None:
+            nonlocal inserted_count, pending_remote
+            if not pending_remote:
+                return
+            for start in range(0, len(pending_remote), 100):
+                chunk = pending_remote[start:start + 100]
+                self._request(
+                    "POST",
+                    f"/playlists/{playlist_id}/items",
+                    json={"uris": chunk, "position": local_cursor + inserted_count},
+                )
+                inserted_count += len(chunk)
+            pending_remote = []
+
+        for uri in desired_uris:
+            uri = str(uri or "")
+            if remaining_local_counts.get(uri, 0):
+                insert_pending()
+                remaining_local_counts[uri] -= 1
+                local_cursor += 1
+            elif uri and not uri.startswith("spotify:local:"):
+                pending_remote.append(uri)
+        insert_pending()
+        return True
+
+    def _write_playlist(
+        self,
+        playlist_id: str,
+        uris: list[str],
+        mode: str,
+        preserve_local_files: bool = False,
+    ) -> tuple[list[str], list[str]]:
+        current_tracks = (
+            self.playlist_tracks(playlist_id, include_local=True)
+            if preserve_local_files
+            else self.playlist_tracks(playlist_id)
+        )
         before = [track["uri"] for track in current_tracks if track.get("uri")]
+        local_uris = [
+            track["uri"]
+            for track in current_tracks
+            if track.get("is_local") and track.get("uri")
+        ]
         mode = mode if mode in {"replace", "merge", "append"} else "replace"
         if mode == "replace":
-            after = list(dict.fromkeys(uris))
-            self._request("PUT", f"/playlists/{playlist_id}/items", json={"uris": after})
+            after = (
+                list(dict.fromkeys(local_uris + uris))
+                if preserve_local_files
+                else list(dict.fromkeys(uris))
+            )
+            if not (
+                preserve_local_files
+                and self._write_order_preserving_local(playlist_id, after, current_tracks)
+            ):
+                self._replace_playlist_items(playlist_id, after, current_tracks)
         elif mode == "merge":
             after = list(dict.fromkeys(before + uris))
-            self._request("PUT", f"/playlists/{playlist_id}/items", json={"uris": after})
+            if not (
+                preserve_local_files
+                and self._write_order_preserving_local(playlist_id, after, current_tracks)
+            ):
+                self._replace_playlist_items(playlist_id, after, current_tracks)
         else:
             after = before + list(uris)
-            for start in range(0, len(uris), 100):
-                self._request("POST", f"/playlists/{playlist_id}/items", json={"uris": uris[start:start + 100]})
+            remote_uris = [uri for uri in uris if not str(uri).startswith("spotify:local:")]
+            for start in range(0, len(remote_uris), 100):
+                self._request(
+                    "POST",
+                    f"/playlists/{playlist_id}/items",
+                    json={"uris": remote_uris[start:start + 100]},
+                )
         return before, after
 
     def apply(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -777,7 +1024,12 @@ class PlaylistAutomation:
         uris = [str(uri) for uri in body.get("uris", []) if uri]
         if not target_id:
             raise PlaylistAutomationError("Choose a target playlist first")
-        before, after = self._write_playlist(target_id, uris, str(body.get("update_mode") or "replace"))
+        before, after = self._write_playlist(
+            target_id,
+            uris,
+            str(body.get("update_mode") or "replace"),
+            bool(body.get("preserve_local_files", False)),
+        )
         playlist_name = next((item["name"] for item in self.playlists() if item["id"] == target_id), target_id)
         record = {"id": uuid.uuid4().hex, "timestamp": int(time.time()), "action": "update", "playlist_id": target_id, "playlist_name": playlist_name, "before": before, "after": after, "tracks_processed": len(uris)}
         with self._lock:
@@ -805,7 +1057,10 @@ class PlaylistAutomation:
         record = next((item for item in self.history() if item.get("id") == history_id), None)
         if not record:
             raise PlaylistAutomationError("History entry not found")
-        self._request("PUT", f"/playlists/{record['playlist_id']}/items", json={"uris": record.get("before", [])})
+        playlist_id = str(record["playlist_id"])
+        current_tracks = self.playlist_tracks(playlist_id, include_local=True)
+        if not self._write_order_preserving_local(playlist_id, record.get("before", []), current_tracks):
+            self._replace_playlist_items(playlist_id, record.get("before", []), current_tracks)
         return {"success": True}
 
     def compare(self, playlist_ids: list[str]) -> dict[str, Any]:
@@ -822,7 +1077,7 @@ class PlaylistAutomation:
         return {"playlists_compared": len(playlist_ids), "duplicates": duplicates, "duplicate_count": len(duplicates)}
 
     def remove_track(self, playlist_id: str, track_uri: str) -> dict[str, Any]:
-        self._request("DELETE", f"/playlists/{playlist_id}/items", json={"tracks": [{"uri": track_uri}]})
+        self._request("DELETE", f"/playlists/{playlist_id}/items", json={"items": [{"uri": track_uri}]})
         return {"success": True}
 
     def ignored(self) -> list[dict[str, Any]]:
@@ -855,7 +1110,10 @@ class PlaylistAutomation:
         if len(parts) != 5:
             return None
         minute, hour, day, month, weekday = parts
-        current = datetime.fromtimestamp(base or time.time()).replace(second=0, microsecond=0)
+        local_timezone = datetime.now().astimezone().tzinfo
+        current = datetime.fromtimestamp(
+            base or time.time(), tz=local_timezone
+        ).replace(second=0, microsecond=0)
         if minute == "0" and hour == "*" and day == "*" and month == "*" and weekday == "*":
             return current.timestamp() + 3600
         if minute == "0" and hour.startswith("*/") and day == "*" and month == "*" and weekday == "*":
@@ -869,7 +1127,7 @@ class PlaylistAutomation:
             target_hour = int(hour)
         except ValueError:
             return None
-        for offset in range(0, 370):
+        for offset in range(370):
             candidate = current.replace(hour=target_hour, minute=target_minute) + timedelta(days=offset)
             if candidate.timestamp() <= (base or time.time()) + 30:
                 continue
@@ -933,6 +1191,7 @@ class PlaylistAutomation:
                         state["schedules"] = rows
                         self._save_state(state)
             except Exception:
+                logger.exception("Playlist automation scheduler iteration failed")
                 continue
 
     def start_scheduler(self) -> None:
@@ -952,6 +1211,10 @@ class PlaylistAutomation:
         value = dict(body)
         value["id"] = config_id or str(value.get("id") or uuid.uuid4().hex)
         value["name"] = str(value.get("name") or "Untitled automation").strip()
+        source_ids = value.get("source_playlist_ids")
+        if source_ids is None:
+            source_ids = value.get("playlist_ids", [])
+        value["source_playlist_ids"] = self._normalise_playlist_ids(source_ids)
         value.setdefault("sort_rules", DEFAULT_SORT_RULES)
         value.setdefault("update_mode", "replace")
         with self._lock:
@@ -982,8 +1245,18 @@ class PlaylistAutomation:
         item = next((value for value in self.configs() if value.get("id") == config_id), None)
         if not item:
             raise PlaylistAutomationError("Automation configuration not found")
+        target_id = str(item.get("target_playlist_id") or "")
+        if not target_id:
+            raise PlaylistAutomationError("The dynamic playlist has no target playlist")
+        playlists = {row["id"]: row for row in self.playlists()}
+        target = playlists.get(target_id)
+        if not target:
+            raise PlaylistAutomationError("The configured target playlist could not be found")
+        if not target.get("editable"):
+            raise PlaylistAutomationError("The configured target playlist is not editable")
+        source_ids = self._normalise_playlist_ids(item.get("source_playlist_ids") or item.get("playlist_ids") or [])
         preview = self.scan({
-            "playlist_ids": item.get("source_playlist_ids") or item.get("playlist_ids") or [],
+            "playlist_ids": source_ids,
             "sort_enabled": item.get("sort_enabled", True),
             "sort_rules": item.get("sort_rules") or DEFAULT_SORT_RULES,
             "deduplicate": item.get("deduplicate", False),
@@ -995,7 +1268,19 @@ class PlaylistAutomation:
             "exclude_liked_songs": item.get("exclude_liked_songs", False),
             "sample_per_source": item.get("sample_per_source"),
         })
-        return self.apply({"target_playlist_id": item.get("target_playlist_id"), "uris": preview.get("uris", []), "update_mode": item.get("update_mode", "replace")})
+        result = self.apply(
+            {
+                "target_playlist_id": target_id,
+                "uris": preview.get("uris", []),
+                "update_mode": item.get("update_mode", "replace"),
+                "preserve_local_files": item.get("preserve_local_files", False),
+            }
+        )
+        result["source_playlist_count"] = preview.get("source_playlist_count", len(source_ids))
+        result["source_playlists"] = preview.get("source_playlists", [])
+        result["source_track_count"] = preview.get("original_count", 0)
+        result["result_track_count"] = preview.get("track_count", 0)
+        return result
 
     def run_all_configs(self) -> dict[str, Any]:
         configs = self.configs()
@@ -1013,7 +1298,10 @@ class PlaylistAutomation:
             if not item:
                 return
             visiting.add(config_id)
-            for source_id in item.get("source_playlist_ids") or []:
+            source_ids = self._normalise_playlist_ids(
+                item.get("source_playlist_ids") or item.get("playlist_ids") or []
+            )
+            for source_id in source_ids:
                 dependency = by_target.get(str(source_id))
                 if dependency:
                     visit(dependency)
@@ -1033,9 +1321,24 @@ class PlaylistAutomation:
     def import_config(self, body: dict[str, Any]) -> None:
         if not isinstance(body, dict):
             raise PlaylistAutomationError("Automation config must be a JSON object")
+        imported_configs = body.get("configs", [])
+        if not isinstance(imported_configs, list):
+            imported_configs = []
+        # Keep imported files compatible with both the current array format
+        # and older exports that stored one source playlist as a scalar.
+        normalised_configs = []
+        for item in imported_configs:
+            if not isinstance(item, dict):
+                continue
+            value = dict(item)
+            source_ids = value.get("source_playlist_ids")
+            if source_ids is None:
+                source_ids = value.get("playlist_ids", [])
+            value["source_playlist_ids"] = self._normalise_playlist_ids(source_ids)
+            normalised_configs.append(value)
         with self._lock:
             state = self._load_state()
-            state["configs"] = body.get("configs", []) if isinstance(body.get("configs", []), list) else []
+            state["configs"] = normalised_configs
             state["ignored_tracks"] = body.get("ignored_tracks", []) if isinstance(body.get("ignored_tracks", []), list) else []
             self._save_state(state)
 
@@ -1092,7 +1395,10 @@ class PlaylistAutomation:
             raise PlaylistAutomationError("No selected playlists could be read")
         backup_dir = self._backup_directory()
         os.makedirs(backup_dir, exist_ok=True)
-        filename = f"playlist-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+        filename = (
+            f"playlist-backup-"
+            f"{datetime.now().astimezone().strftime('%Y%m%d-%H%M%S')}.json"
+        )
         with open(os.path.join(backup_dir, filename), "w", encoding="utf-8") as handle:
             json.dump(value, handle, indent=2, ensure_ascii=False)
         return {"success": True, "filename": filename, "playlists": len(value["playlists"])}

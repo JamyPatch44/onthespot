@@ -1303,6 +1303,7 @@ export interface PlaylistAutomationTrack {
 
 export interface PlaylistAutomationPreview {
   source_playlist_count: number;
+  source_playlists?: PlaylistAutomationSourceSummary[];
   original_count: number;
   track_count: number;
   duplicates_removed: number;
@@ -1382,6 +1383,27 @@ export interface PlaylistAutomationHistoryItem {
   playlist_id: string;
   playlist_name: string;
   tracks_processed: number;
+}
+
+export interface PlaylistAutomationSourceSummary {
+  id: string;
+  name: string;
+  track_count: number;
+  included_track_count?: number;
+  excluded_track_count?: number;
+}
+
+export interface PlaylistAutomationRunResult {
+  success: boolean;
+  configs_processed?: number;
+  playlist_name?: string;
+  tracks_processed?: number;
+  source_playlist_count?: number;
+  source_track_count?: number;
+  result_track_count?: number;
+  source_playlists?: PlaylistAutomationSourceSummary[];
+  results?: Array<Record<string, unknown>>;
+  error?: string;
 }
 
 export async function fetchPlaylistAutomationStatus(): Promise<PlaylistAutomationStatus | null> {
@@ -1737,32 +1759,55 @@ export async function reorderPlaylistAutomationConfigs(
 
 export async function runPlaylistAutomationConfig(
   id: string,
-): Promise<boolean> {
+): Promise<PlaylistAutomationRunResult> {
   try {
     const res = await request(
       `/playlist-automation/configs/${encodeURIComponent(id)}/run`,
       { method: "POST" },
     );
-    return res.ok;
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      return {
+        success: false,
+        error: String(payload.detail || "Failed to run playlist automation"),
+      };
+    }
+    return (await res.json()) as PlaylistAutomationRunResult;
   } catch (err) {
     console.error("Run automation config failed:", err);
-    return false;
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to run playlist automation",
+    };
   }
 }
 
 export async function runAllPlaylistAutomationConfigs(): Promise<{
   success: boolean;
   configs_processed?: number;
+  results?: Array<Record<string, unknown>>;
+  error?: string;
 } | null> {
   try {
     const res = await request("/playlist-automation/configs/run-all", {
       method: "POST",
     });
-    if (!res.ok) throw new Error("Failed to run playlist sorting configs");
-    return await res.json();
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      throw new Error(String(payload.detail || "Failed to run playlist sorting configs"));
+    }
+    return (await res.json()) as {
+      success: boolean;
+      configs_processed?: number;
+      results?: Array<Record<string, unknown>>;
+      error?: string;
+    };
   } catch (err) {
     console.error("Run all playlist configs failed:", err);
-    return null;
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to run playlist sorting configs",
+    };
   }
 }
 
