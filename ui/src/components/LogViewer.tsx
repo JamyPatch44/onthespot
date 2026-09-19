@@ -26,7 +26,6 @@ export const LogViewer: React.FC<LogViewerProps> = ({
     return true;
   });
 
-  onRefresh()
   
   const handleDownloadFile = () => {
     const url = `${getTargetBackendUrl()}/logs/download`;

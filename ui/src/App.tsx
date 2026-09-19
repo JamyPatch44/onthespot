@@ -452,6 +452,12 @@ export default function App() {
     setLogs(fresh);
   };
 
+  const handleTabChangeDinamycData = async (id :string) => {
+    if (id === "logs") {
+      handleRefreshLogs()
+    }
+    setActiveTab(id)
+  }
   const activeDownloadsCount = queue.filter(
     (i) => i.item_status === "Downloading" || i.item_status === "Paused",
   ).length;
@@ -461,7 +467,7 @@ export default function App() {
       className={`${isDarkMode === "dark" ? "dark" : ""} min-h-screen antialiased`}>
       <Navbar
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={handleTabChangeDinamycData}
         queueCount={
           queue.filter(
             (i) =>
@@ -473,7 +479,7 @@ export default function App() {
         activeDownloads={activeDownloadsCount}
         accountCount={accounts.length}
         toggleTheme={() => toggleDarkMode()}
-        appVersion={config?.version || "v2.0.0 Alpha 2"}
+        appVersion={config?.version || "ND"}
         notificationHistoryCount={history.length}
         onOpenNotificationHistory={() => setNotificationHistoryOpen(true)}
         language={config?.language || "en_US"}
