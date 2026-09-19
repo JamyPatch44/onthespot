@@ -258,7 +258,7 @@ def apple_music_get_search_results(session, search_term, content_types):
     return search_results
 
 
-def apple_music_get_track_metadata(session, item_id):
+def apple_music_get_track_metadata(session, item_id, item):
     params = {}
     params["include"] = "lyrics"
     track_data = make_call(

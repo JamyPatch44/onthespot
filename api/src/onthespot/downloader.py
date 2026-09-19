@@ -161,9 +161,6 @@ class DownloadWorker:
                 try:
                     if not pending.empty():
                         item: QueueItem = pending.get_nowait()
-                        if item is None:
-                            time.sleep(0.2)
-                            continue
                         if item.item_status in [
                             ItemStatus.CANCELLED,
                             ItemStatus.DELETED,
@@ -211,11 +208,7 @@ class DownloadWorker:
                 # ---- Fetch metadata -------------------------------------------
                 try:
                     metadata_fn = get_metadata_function(service, item_type)
-                    if service == "youtube_music":
-                        # passing item for YouTube Music album number shim
-                        item_metadata = metadata_fn(token, item_id, item.model_dump())
-                    else:
-                        item_metadata = metadata_fn(token, item_id)
+                    item_metadata = metadata_fn(token, item_id, item.model_dump())
                 except (Exception, KeyError) as exc:
                     error_msg = f"Failed to fetch metadata for '{item_id}', Error: {exc}"
                     if "Max retries" in str(exc) or "exhausted" in str(exc):
@@ -223,9 +216,9 @@ class DownloadWorker:
                     logger.error(error_msg, exc_info=exc)
                     item.error = error_msg
                     item.item_status = ItemStatus.FAILED
-
                     requeue_item(item)
                     continue
+
                 # ---- Emit progress metadata ------------------------------------
                 try:
                     progress_item = item
@@ -241,7 +234,7 @@ class DownloadWorker:
                 # --- Format item path from templates  --------------------------
                 file_template_path = format_item_path(item, item_metadata)
 
-                # ---- Resolve download paths and check if file exists ----------
+                # ---- Resolve download paths and check if file already exists ----------
                 if service != "generic":
                     temp_file_path, final_file_path = self._resolve_paths(item, item_type, file_template_path)
 
@@ -291,14 +284,14 @@ class DownloadWorker:
                     requeue_item(item)
                     continue
 
-                # ---- Post-processing (convert, tag, thumbnail, lyrics, ecc) ------------------------------------------
-
                 # The temp file is downloaded extensionless as they depend on availability
                 # so we add the extension after the download function returns the effectively downloaded format
                 if temp_file_format != "":
                     new_path_with_ext = temp_file_path + temp_file_format
                     os.rename(temp_file_path, new_path_with_ext)
                     temp_file_path = new_path_with_ext
+
+                # ---- Post-processing (convert, tag, thumbnail, lyrics, ecc) ------------------------------------------
 
                 if service != "generic":
                     progress_hook(item, 50)
@@ -327,6 +320,7 @@ class DownloadWorker:
 
                 self._raise_if_cancelled(item)
 
+                # ---- File Verification -------------------------------------------
                 if service != "generic" and item_type in ("track", "podcast_episode"):
                     verification = verify_file(item.file_path)
                     if not verification.get("valid"):
@@ -441,7 +435,7 @@ class DownloadWorker:
 
         temp_file_path = os.path.join(directory, "~" + file_name)
         os.makedirs(directory, exist_ok=True)
-        logger.info("resolved paths: %s \n %s ", temp_file_path, file_path)
+        logger.debug("resolved paths, temp: %s | final: %s ", temp_file_path, file_path)
         return temp_file_path, file_path
 
     # ------------------------------------------------------------------

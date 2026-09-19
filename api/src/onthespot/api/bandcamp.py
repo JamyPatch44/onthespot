@@ -165,7 +165,7 @@ def bandcamp_get_album_track_ids(_, url):
         return item_ids
 
 
-def bandcamp_get_track_metadata(_, url):
+def bandcamp_get_track_metadata(_, url, item):
     track_webpage = make_call(url, text=True, use_ssl=True)
     track_data = {}
     matches = re.findall(r'data-(\w+)="(.*?)"', track_webpage)

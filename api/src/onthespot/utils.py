@@ -793,7 +793,7 @@ def embed_metadata(item, metadata):
         # https://wiki.multimedia.cx/index.php?title=FFmpeg_Metadata
 
         if config.get("embed_branding"):
-            branding = "Downloaded by OnTheSpot, https://github.com/justin025/onthespot"
+            branding = "By OnTheSpot" + config.get("version", "v0.0")
             if filetype == ".mp3":
                 # Incorrectly embedded to TXXX:TCMP, patch sent upstream
                 command += ["-metadata", f"COMM={branding}"]

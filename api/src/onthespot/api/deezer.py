@@ -83,7 +83,7 @@ def deezer_get_playlist_data(_, playlist_id):
     return playlist_name, playlist_by, track_ids
 
 
-def deezer_get_track_metadata(_, item_id):
+def deezer_get_track_metadata(_, item_id, item):
     logger.info(f"Get track info for: '{item_id}'")
 
     track_data = make_call(f"{BASE_URL}/track/{item_id}")

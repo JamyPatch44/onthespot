@@ -1,7 +1,7 @@
+import { Download, RefreshCw, Search, Terminal, Trash2 } from 'lucide-react';
 import React, { useRef, useState } from 'react';
-import { Terminal, RefreshCw, Search, Trash2, Download } from 'lucide-react';
-import { LogEntry } from '../types';
 import { getTargetBackendUrl } from '../lib/api';
+import { LogEntry } from '../types';
 
 interface LogViewerProps {
   logs: LogEntry[];
@@ -26,6 +26,8 @@ export const LogViewer: React.FC<LogViewerProps> = ({
     return true;
   });
 
+  onRefresh()
+  
   const handleDownloadFile = () => {
     const url = `${getTargetBackendUrl()}/logs/download`;
     window.open(url, '_blank');

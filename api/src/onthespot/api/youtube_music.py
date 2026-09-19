@@ -114,7 +114,7 @@ def youtube_music_get_search_results(_, search_term, content_types):
     return search_results
 
 
-def youtube_music_get_track_metadata(_, item_id, item=None):
+def youtube_music_get_track_metadata(_, item_id, item):
     url = f"https://music.youtube.com/watch?v={item_id}"
     request_key = md5(f"{url}".encode(), usedforsecurity=False).hexdigest()
     cache_dir = os.path.join(config.get("_cache_dir"), "reqcache")

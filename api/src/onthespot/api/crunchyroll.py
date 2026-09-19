@@ -241,7 +241,7 @@ def crunchyroll_get_search_results(token, search_term, _):
     return search_results
 
 
-def crunchyroll_get_episode_metadata(token, item_id):
+def crunchyroll_get_episode_metadata(token, item_id, item):
     headers = {}
     headers["Authorization"] = f"Bearer {token}"
     headers["Connection"] = "Keep-Alive"

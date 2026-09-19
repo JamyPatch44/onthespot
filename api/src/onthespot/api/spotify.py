@@ -1061,7 +1061,7 @@ def spotify_get_search_results(
     return search_results
 
 
-def spotify_get_track_metadata(token, item_id):
+def spotify_get_track_metadata(token, item_id, item=None):
     # Public catalog calls (api.spotify.com) use the OAuth override when
     # configured, else the librespot token. The internal spclient.wg endpoint
     # (credits) only accepts the librespot token, so keep a separate header.
@@ -1255,7 +1255,7 @@ def spotify_get_track_metadata(token, item_id):
     return info
 
 
-def spotify_get_podcast_episode_metadata(token, episode_id):
+def spotify_get_podcast_episode_metadata(token, episode_id, item):
     logger.info("Get episode info for episode by id %s", episode_id)
 
     headers = spotify_get_auth_header(token)

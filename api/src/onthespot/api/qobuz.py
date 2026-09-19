@@ -259,7 +259,7 @@ def qobuz_get_search_results(token, search_term, content_types):
     return search_results
 
 
-def qobuz_get_track_metadata(token, item_id):
+def qobuz_get_track_metadata(token, item_id, item):
     headers = {}
     headers["X-User-Auth-Token"] = token["user_auth_token"]
     headers["X-App-Id"] = token["app_id"]

@@ -37,7 +37,7 @@ def generic_add_account():
     config.save()
 
 
-def generic_get_track_metadata(_, url) -> list | dict | None:
+def generic_get_track_metadata(_, url, item) -> list | dict | None:
     request_key = md5(f"{url}".encode(), usedforsecurity=False).hexdigest()
     cache_dir = os.path.join(config.get("_cache_dir"), "reqcache")
     os.makedirs(cache_dir, exist_ok=True)
