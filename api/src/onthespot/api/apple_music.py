@@ -1,23 +1,23 @@
 import base64
 import json
-import m3u8
-import requests
 import re
 from uuid import uuid4
+
+import m3u8
+import requests
 from defusedxml import ElementTree as ET
 from pywidevine import PSSH, Cdm, Device
 from pywidevine.license_protocol_pb2 import WidevinePsshData
+
 from ..constants import HTTP_TIMEOUT, WVN_KEY
 from ..otsconfig import config
 from ..runtimedata import account_pool, get_logger
-from ..utils import conv_list_format, make_call, get_primary_composer
+from ..utils import conv_list_format, get_primary_composer, make_call
 
 logger = get_logger("api.apple_music")
 BASE_URL = "https://amp-api.music.apple.com/v1"
 WEB_BASE_URL = "https://music.apple.com"
-WVN_LICENSE_URL = (
-    "https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/acquireWebPlaybackLicense"
-)
+WVN_LICENSE_URL = "https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/acquireWebPlaybackLicense"
 APPLE_MUSIC_DEVELOPER_TOKEN_REGEX = r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
 APPLE_MUSIC_DEVELOPER_TOKEN_ISSUER = "AMPWebPlay"
 APPLE_MUSIC_DEVELOPER_TOKEN_KEY_ID = "WebPlayKid"
@@ -25,9 +25,7 @@ APPLE_MUSIC_DEVELOPER_TOKEN_KEY_ID = "WebPlayKid"
 
 def _extract_web_player_assets(home_page):
     asset_paths = []
-    for asset_path in re.findall(
-        r'/(assets/(?:index|index-legacy)[^/"\'<>]+\.js)', home_page
-    ):
+    for asset_path in re.findall(r'/(assets/(?:index|index-legacy)[^/"\'<>]+\.js)', home_page):
         if asset_path not in asset_paths:
             asset_paths.append(asset_path)
 
@@ -40,9 +38,7 @@ def _extract_web_player_assets(home_page):
 def _extract_developer_token(index_js_page):
     token_matches = re.findall(APPLE_MUSIC_DEVELOPER_TOKEN_REGEX, index_js_page)
     if not token_matches:
-        raise ValueError(
-            "Could not find Apple Music developer token in web player asset."
-        )
+        raise ValueError("Could not find Apple Music developer token in web player asset.")
 
     for token in token_matches:
         header, payload, _signature = token.split(".")
@@ -58,9 +54,7 @@ def _extract_developer_token(index_js_page):
         ):
             return token
 
-    raise ValueError(
-        "Could not identify Apple Music developer token in web player asset."
-    )
+    raise ValueError("Could not identify Apple Music developer token in web player asset.")
 
 
 def _decode_jwt_part(jwt_part):
@@ -85,9 +79,7 @@ def apple_music_login_user(account):
     logger.info("Logging into Apple Music account...")
     try:
         session = requests.Session()
-        session.cookies.update(
-            {"media-user-token": account["login"]["media-user-token"]}
-        )
+        session.cookies.update({"media-user-token": account["login"]["media-user-token"]})
         session.headers.update(
             {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:95.0) Gecko/20100101 Firefox/95.0",
@@ -113,9 +105,7 @@ def apple_music_login_user(account):
 
         token = None
         for asset_path in asset_paths:
-            index_js_response = session.get(
-                f"{WEB_BASE_URL}/{asset_path}", timeout=HTTP_TIMEOUT
-            )
+            index_js_response = session.get(f"{WEB_BASE_URL}/{asset_path}", timeout=HTTP_TIMEOUT)
             index_js_response.raise_for_status()
             try:
                 token = _extract_developer_token(index_js_response.text)
@@ -124,25 +114,15 @@ def apple_music_login_user(account):
                 logger.debug(f"Apple Music developer token not found in {asset_path}")
 
         if not token:
-            raise ValueError(
-                "Could not find Apple Music developer token in any web player asset."
-            )
+            raise ValueError("Could not find Apple Music developer token in any web player asset.")
 
         session.headers.update({"authorization": f"Bearer {token}"})
         session.params = {"l": "en-US"}
 
-        account_data_response = session.get(
-            f"{BASE_URL}/me/account?meta=subscription", timeout=HTTP_TIMEOUT
-        )
+        account_data_response = session.get(f"{BASE_URL}/me/account?meta=subscription", timeout=HTTP_TIMEOUT)
         account_data_response.raise_for_status()
         account_data = account_data_response.json()
-        session.cookies.update(
-            {
-                "itua": account_data.get("meta", {})
-                .get("subscription", {})
-                .get("storefront")
-            }
-        )
+        session.cookies.update({"itua": account_data.get("meta", {}).get("subscription", {}).get("storefront")})
 
         account_pool.append(
             {
@@ -288,11 +268,7 @@ def apple_music_get_track_metadata(session, item_id):
     )
     try:
         album_id = (
-            track_data.get("data", [])[0]
-            .get("relationships", {})
-            .get("albums", {})
-            .get("data", [])[0]
-            .get("id", {})
+            track_data.get("data", [])[0].get("relationships", {}).get("albums", {}).get("data", [])[0].get("id", {})
         )
         album_data = make_call(
             f"{BASE_URL}/catalog/{session.cookies.get('itua')}/albums/{album_id}",
@@ -303,82 +279,35 @@ def apple_music_get_track_metadata(session, item_id):
 
     # Artists
     artists = []
-    for artist in (
-        track_data.get("data", [])[0]
-        .get("attributes", {})
-        .get("artistName")
-        .replace("&", ",")
-        .split(",")
-    ):
+    for artist in track_data.get("data", [])[0].get("attributes", {}).get("artistName").replace("&", ",").split(","):
         artists.append(artist.strip())
 
     info = {}
     info["item_id"] = track_data.get("data", [])[0].get("id")
-    info["album_name"] = (
-        track_data.get("data", [])[0].get("attributes", {}).get("albumName")
-    )
-    info["genre"] = conv_list_format(
-        track_data.get("data", [])[0].get("attributes", {}).get("genreNames", [])
-    )
+    info["album_name"] = track_data.get("data", [])[0].get("attributes", {}).get("albumName")
+    info["genre"] = conv_list_format(track_data.get("data", [])[0].get("attributes", {}).get("genreNames", []))
     # info['track_number'] = track_data.get('data', [])[0].get('attributes', {}).get('trackNumber')
     try:
-        info["release_year"] = (
-            track_data.get("data", [])[0]
-            .get("attributes", {})
-            .get("releaseDate")
-            .split("-")[0]
-        )
+        info["release_year"] = track_data.get("data", [])[0].get("attributes", {}).get("releaseDate").split("-")[0]
     except Exception:
         pass
-    info["length"] = str(
-        track_data.get("data", [])[0].get("attributes", {}).get("durationInMillis")
-    )
+    info["length"] = str(track_data.get("data", [])[0].get("attributes", {}).get("durationInMillis"))
     info["isrc"] = track_data.get("data", [])[0].get("attributes", {}).get("isrc")
 
-    image_url = (
-        track_data.get("data", [])[0]
-        .get("attributes", {})
-        .get("artwork", {})
-        .get("url")
-    )
-    max_height = (
-        track_data.get("data", [])[0]
-        .get("attributes", {})
-        .get("artwork", {})
-        .get("height")
-    )
-    max_width = (
-        track_data.get("data", [])[0]
-        .get("attributes", {})
-        .get("artwork", {})
-        .get("width")
-    )
-    info["image_url"] = image_url.replace("{w}", str(max_width)).replace(
-        "{h}", str(max_height)
-    )
+    image_url = track_data.get("data", [])[0].get("attributes", {}).get("artwork", {}).get("url")
+    max_height = track_data.get("data", [])[0].get("attributes", {}).get("artwork", {}).get("height")
+    max_width = track_data.get("data", [])[0].get("attributes", {}).get("artwork", {}).get("width")
+    info["image_url"] = image_url.replace("{w}", str(max_width)).replace("{h}", str(max_height))
 
-    info["writer"] = (
-        track_data.get("data", [])[0].get("attributes", {}).get("composerName")
-    )
+    info["writer"] = track_data.get("data", [])[0].get("attributes", {}).get("composerName")
     info["composer"] = info["writer"]
-    info["language"] = (
-        track_data.get("data", [])[0].get("attributes", {}).get("audioLocale")
-    )
+    info["language"] = track_data.get("data", [])[0].get("attributes", {}).get("audioLocale")
     info["item_url"] = track_data.get("data", [])[0].get("attributes", {}).get("url")
-    info["is_playable"] = (
-        True
-        if track_data.get("data", [])[0].get("attributes", {}).get("playParams")
-        else False
-    )
-    info["disc_number"] = (
-        track_data.get("data", [])[0].get("attributes", {}).get("discNumber")
-    )
+    info["is_playable"] = True if track_data.get("data", [])[0].get("attributes", {}).get("playParams") else False
+    info["disc_number"] = track_data.get("data", [])[0].get("attributes", {}).get("discNumber")
     info["title"] = track_data.get("data", [])[0].get("attributes", {}).get("name")
     info["explicit"] = (
-        True
-        if track_data.get("data", [])[0].get("attributes", {}).get("contentRating")
-        == "explicit"
-        else False
+        True if track_data.get("data", [])[0].get("attributes", {}).get("contentRating") == "explicit" else False
     )
     info["artists"] = conv_list_format(artists)
 
@@ -387,16 +316,10 @@ def apple_music_get_track_metadata(session, item_id):
         info["album_artists"] = get_primary_composer(info["composer"])
 
     if album_data:
-        info["copyright"] = (
-            album_data.get("data", [])[0].get("attributes", {}).get("copyright")
-        )
+        info["copyright"] = album_data.get("data", [])[0].get("attributes", {}).get("copyright")
         info["upc"] = album_data.get("data", [])[0].get("attributes", {}).get("upc")
-        info["label"] = (
-            album_data.get("data", [])[0].get("attributes", {}).get("recordLabel")
-        )
-        info["total_tracks"] = (
-            album_data.get("data", [])[0].get("attributes", {}).get("trackCount")
-        )
+        info["label"] = album_data.get("data", [])[0].get("attributes", {}).get("recordLabel")
+        info["total_tracks"] = album_data.get("data", [])[0].get("attributes", {}).get("trackCount")
 
         album_type = "album"
         if album_data.get("data", [])[0].get("attributes", {}).get("isSingle"):
@@ -409,18 +332,13 @@ def apple_music_get_track_metadata(session, item_id):
         track_number = None
 
         for i, track in enumerate(
-            album_data.get("data", [])[0]
-            .get("relationships", {})
-            .get("tracks", {})
-            .get("data", [])
+            album_data.get("data", [])[0].get("relationships", {}).get("tracks", {}).get("data", [])
         ):
             if track.get("id") == str(item_id):
                 track_number = i + 1
                 break
         if not track_number:
-            track_number = (
-                track_data.get("data", [])[0].get("attributes", {}).get("trackNumber")
-            )
+            track_number = track_data.get("data", [])[0].get("attributes", {}).get("trackNumber")
 
         # Total Discs
         total_discs = (
@@ -447,18 +365,11 @@ def apple_music_get_lyrics(session, item_id, item_type, metadata, filepath):
         session=session,
     )
 
-    time_synced = (
-        track_data.get("data", [])[0].get("attributes", {}).get("hasTimeSyncedLyrics")
-    )
+    time_synced = track_data.get("data", [])[0].get("attributes", {}).get("hasTimeSyncedLyrics")
     if config.get("only_download_synced_lyrics") and not time_synced:
         return False
 
-    if len(
-        track_data.get("data", [])[0]
-        .get("relationships", {})
-        .get("lyrics", {})
-        .get("data", [])
-    ):
+    if len(track_data.get("data", [])[0].get("relationships", {}).get("lyrics", {}).get("data", [])):
         ttml_data = (
             track_data.get("data", [])[0]
             .get("relationships", {})
@@ -475,9 +386,7 @@ def apple_music_get_lyrics(session, item_id, item_type, metadata, filepath):
 
             for key in metadata.keys():
                 value = metadata[key]
-                if key in ["title", "track_title", "tracktitle"] and config.get(
-                    "embed_name"
-                ):
+                if key in ["title", "track_title", "tracktitle"] and config.get("embed_name"):
                     lyrics_list.append(f"[ti:{value}]")
                 elif key == "artists" and config.get("embed_artist"):
                     lyrics_list.append(f"[ar:{value}]")
@@ -492,15 +401,11 @@ def apple_music_get_lyrics(session, item_id, item_type, metadata, filepath):
                     digit = "0"
                 else:
                     digit = ""
-                lyrics_list.append(
-                    f"[length:{digit}{str((l_ms / 1000) / 60)[:1]}:{round((l_ms / 1000) % 60)}]\n"
-                )
+                lyrics_list.append(f"[length:{digit}{str((l_ms / 1000) / 60)[:1]}:{round((l_ms / 1000) % 60)}]\n")
 
         default_length = len(lyrics_list)
 
-        for p in ET.fromstring(ttml_data.replace("`", "")).findall(
-            ".//{http://www.w3.org/ns/ttml}p"
-        ):
+        for p in ET.fromstring(ttml_data.replace("`", "")).findall(".//{http://www.w3.org/ns/ttml}p"):
             begin_time = p.attrib.get("begin")
             lyric = p.text
             if lyric:
@@ -563,9 +468,7 @@ def apple_music_get_decryption_key(session, stream_url, item_id):
         cdm = Cdm.from_device(Device.loads(WVN_KEY))
 
         cdm_session = cdm.open()
-        challenge = base64.b64encode(
-            cdm.get_license_challenge(cdm_session, pssh_obj)
-        ).decode()
+        challenge = base64.b64encode(cdm.get_license_challenge(cdm_session, pssh_obj)).decode()
 
         json = {}
         json["challenge"] = challenge
@@ -575,16 +478,12 @@ def apple_music_get_decryption_key(session, stream_url, item_id):
         json["isLibrary"] = False
         json["user-initiated"] = True
 
-        license_data = session.post(
-            WVN_LICENSE_URL, json=json, timeout=HTTP_TIMEOUT
-        ).json()
+        license_data = session.post(WVN_LICENSE_URL, json=json, timeout=HTTP_TIMEOUT).json()
 
         wvn_license = license_data.get("license")
 
         cdm.parse_license(cdm_session, wvn_license)
-        decryption_key = next(
-            key for key in cdm.get_keys(cdm_session) if key.type == "CONTENT"
-        ).key.hex()
+        decryption_key = next(key for key in cdm.get_keys(cdm_session) if key.type == "CONTENT").key.hex()
 
     finally:
         cdm.close(cdm_session)
@@ -599,12 +498,7 @@ def apple_music_get_album_track_ids(session, album_id):
         session=session,
     )
     item_ids = []
-    for track in (
-        album_data.get("data", [])[0]
-        .get("relationships", {})
-        .get("tracks", {})
-        .get("data", [])
-    ):
+    for track in album_data.get("data", [])[0].get("relationships", {}).get("tracks", {}).get("data", []):
         if track["type"] == "songs":
             item_ids.append(track["id"])
     return item_ids
@@ -624,12 +518,7 @@ def apple_music_get_artist_album_ids(session, artist_id):
     )
 
     item_ids = []
-    for album in (
-        album_data.get("data", [])[0]
-        .get("relationships", {})
-        .get("albums", {})
-        .get("data", [])
-    ):
+    for album in album_data.get("data", [])[0].get("relationships", {}).get("albums", {}).get("data", []):
         item_ids.append(album.get("id"))
     return item_ids
 
@@ -642,9 +531,7 @@ def apple_music_get_playlist_data(session, playlist_id):
         skip_cache=True,
     )
     playlist_name = playlist_data.get("data", [])[0].get("attributes", {}).get("name")
-    playlist_by = (
-        playlist_data.get("data", [])[0].get("attributes", {}).get("curatorName")
-    )
+    playlist_by = playlist_data.get("data", [])[0].get("attributes", {}).get("curatorName")
 
     track_ids = []
     offset = 0

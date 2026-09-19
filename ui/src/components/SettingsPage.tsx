@@ -1,26 +1,21 @@
-import React, { useEffect, useState } from "react";
 import {
-  Save,
-  RotateCcw,
-  Sliders,
-  Music,
-  Film,
-  Tag,
-  Search,
-  Eye,
-  Cpu,
-  Check,
-  Loader2,
-  Download,
-  Upload,
-  Palette,
-  Trash2,
   Archive,
+  Check,
+  Cpu,
+  Download,
+  Eye,
+  Film,
   GripVertical,
+  Loader2,
+  Music,
+  RotateCcw,
+  Save,
+  Search,
+  Sliders,
+  Tag,
+  Upload
 } from "lucide-react";
-import {
-  OTSConfig,
-} from "../types";
+import React, { useEffect, useState } from "react";
 import {
   DownloadProfile,
   exportBackup,
@@ -28,6 +23,9 @@ import {
   saveBackupFile,
 } from "../lib/api";
 import { translate } from "../lib/i18n";
+import {
+  OTSConfig,
+} from "../types";
 import { DownloadProfilesPanel } from "./DownloadProfilesPanel";
 
 
@@ -142,7 +140,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
   if (!config) {
     return (
-      <div className="p-20 flex justify-center items-center text-gray-500 dark:text-neutral-500 font-sans text-sm">
+      <div className="p-20 flex justify-center items-center text-gray-400 dark:text-neutral-500 font-sans text-sm">
         <Loader2 className="w-5 h-5 animate-spin mr-2" />
         Loading configuration...
       </div>
@@ -268,13 +266,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       <div key={key} className="flex items-start justify-between py-3">
         <div className="pr-4 flex-1">
           <label
-            className="text-sm font-medium text-gray-900 dark:text-neutral-100 cursor-pointer select-none"
+            className="text-sm font-medium text-gray-200 dark:text-neutral-100 cursor-pointer select-none"
             onClick={() => !disabled && handleToggle(key, isChecked)}
           >
             {label}
           </label>
           {desc && (
-            <p className="text-xs text-gray-500 dark:text-neutral-400 mt-1 leading-relaxed">
+            <p className="text-xs text-gray-400 dark:text-neutral-400 mt-1 leading-relaxed">
               {desc}
             </p>
           )}
@@ -303,7 +301,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     desc?: string,
   ) => (
     <div key={key} className="flex flex-col gap-1.5 py-2 w-full">
-      <label className="text-sm font-medium text-gray-900 dark:text-neutral-100">
+      <label className="text-sm font-medium text-gray-200 dark:text-neutral-100">
         {label}
       </label>
       <input
@@ -327,7 +325,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         className="ots-input w-full text-sm"
       />
       {desc && (
-        <p className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5 leading-relaxed">
+        <p className="text-xs text-gray-400 dark:text-neutral-400 mt-0.5 leading-relaxed">
           {desc}
         </p>
       )}
@@ -342,7 +340,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     desc?: string,
   ) => (
     <div key={key} className="flex flex-col gap-1.5 py-2 w-full">
-      <label className="text-sm font-medium text-gray-900 dark:text-neutral-100">
+      <label className="text-sm font-medium text-gray-200 dark:text-neutral-100">
         {label}
       </label>
       <select
@@ -357,7 +355,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         ))}
       </select>
       {desc && (
-        <p className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5 leading-relaxed">
+        <p className="text-xs text-gray-400 dark:text-neutral-400 mt-0.5 leading-relaxed">
           {desc}
         </p>
       )}
@@ -427,7 +425,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <Sliders className="h-5 w-5 text-[#1ed760]" />
             System Configuration
           </h2>
-          <p className="text-sm text-gray-500 dark:text-neutral-400 mt-1">
+          <p className="text-sm text-gray-400 dark:text-neutral-400 mt-1">
             Configurations sync automatically with the OnTheSpot service •
             Version {config.version}
           </p>
@@ -497,10 +495,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           {section === "general" && (
             <div className="animate-[fadeIn_0.2s_ease-out]">
               <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-neutral-100">
+                <h3 className="text-lg font-medium text-gray-200 dark:text-neutral-100">
                   System Variables & Workers
                 </h3>
-                <p className="text-sm text-gray-500 mt-1">
+                <p className="text-sm text-gray-400 mt-1">
                   Configure worker threads, download delays, and global
                   application options.
                 </p>
@@ -581,7 +579,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <div className="flex flex-col gap-1.5 py-4">
                   <label
                     htmlFor="application-language"
-                    className="text-sm font-medium text-gray-900 dark:text-neutral-100"
+                    className="text-sm font-medium text-gray-200 dark:text-neutral-100"
                   >
                     {translate(
                       config.language,
@@ -609,7 +607,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       </option>
                     ))}
                   </select>
-                  <p className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5 leading-relaxed">
+                  <p className="text-xs text-gray-400 dark:text-neutral-400 mt-0.5 leading-relaxed">
                     Uses the bundled application language pack. Your library
                     metadata and filenames are never sent to a translation
                     service.
@@ -643,10 +641,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           {section === "audio" && (
             <div className="animate-[fadeIn_0.2s_ease-out]">
               <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-neutral-100">
+                <h3 className="text-lg font-medium text-gray-200 dark:text-neutral-100">
                   Audio Formatting & Output
                 </h3>
-                <p className="text-sm text-gray-500 mt-1">
+                <p className="text-sm text-gray-400 mt-1">
                   Set root music folder, preferred codecs, bitrates, and folder
                   formatters.
                 </p>
@@ -715,10 +713,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
               <div className="mb-6 border-t border-gray-100 pt-6 dark:border-neutral-800/60">
                 <div className="mb-4">
-                  <h4 className="flex items-center gap-2 text-base font-bold text-gray-900 dark:text-neutral-100">
+                  <h4 className="flex items-center gap-2 text-base font-bold text-gray-200 dark:text-neutral-100">
                     Playlist folder organization
                   </h4>
-                  <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">
+                  <p className="mt-1 text-xs text-gray-400 dark:text-neutral-400">
                     Keep playlist downloads together and choose the folder and
                     filename pattern used for tracks from playlists.
                   </p>
@@ -729,7 +727,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   "Enable this to use the Playlist Path Formatter below instead of the regular track formatter for playlist downloads.",
                 )}
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <span className="w-full text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-neutral-400">
+                  <span className="w-full text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-neutral-400">
                     Track template presets
                   </span>
                   {[
@@ -750,7 +748,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       {label}
                     </button>
                   ))}
-                  <span className="mt-2 w-full text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-neutral-400">
+                  <span className="mt-2 w-full text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-neutral-400">
                     Playlist folder presets
                   </span>
                   {[
@@ -777,7 +775,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
                 <div className="mt-4 border-t border-gray-100 pt-4 dark:border-neutral-800/60">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="w-full text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-neutral-400">
+                    <span className="w-full text-xs font-bold uppercase tracking-wider text-gray-400 dark:text-neutral-400">
                       Build a custom formatter
                     </span>
                     {(
@@ -800,7 +798,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           : "Playlist formatter"}
                       </button>
                     ))}
-                    <span className="text-xs text-gray-500 dark:text-neutral-400">
+                    <span className="text-xs text-gray-400 dark:text-neutral-400">
                       Click a variable to insert it into the selected formatter.
                     </span>
                   </div>
@@ -907,10 +905,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           {section === "video" && (
             <div className="animate-[fadeIn_0.2s_ease-out]">
               <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-neutral-100">
+                <h3 className="text-lg font-medium text-gray-200 dark:text-neutral-100">
                   Video, Movies & Anime Settings
                 </h3>
-                <p className="text-sm text-gray-500 mt-1">
+                <p className="text-sm text-gray-400 mt-1">
                   Configure resolution preferences and container formatting for
                   video media.
                 </p>
@@ -995,10 +993,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               {/* V2A Section */}
               <div className="mt-8 pt-8 border-t border-gray-100 dark:border-neutral-800/60">
                 <div className="bg-blue-50 dark:bg-blue-900/10 rounded-2xl p-6 border border-blue-100 dark:border-blue-900/30">
-                  <h4 className="text-base font-medium text-gray-900 dark:text-neutral-100 mb-1">
+                  <h4 className="text-base font-medium text-gray-200 dark:text-neutral-100 mb-1">
                     Video to Audio Extraction (V2A)
                   </h4>
-                  <p className="text-sm text-gray-500 dark:text-neutral-400 mb-4">
+                  <p className="text-sm text-gray-400 dark:text-neutral-400 mb-4">
                     Strip output and save audio streams only when downloading
                     video sources.
                   </p>
@@ -1040,10 +1038,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           {section === "metadata" && (
             <div className="animate-[fadeIn_0.2s_ease-out]">
               <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-neutral-100">
+                <h3 className="text-lg font-medium text-gray-200 dark:text-neutral-100">
                   ID3 Metadata Tagging
                 </h3>
-                <p className="text-sm text-gray-500 mt-1">
+                <p className="text-sm text-gray-400 mt-1">
                   Select exactly which metadata tags to inject into downloaded
                   music tracks.
                 </p>
@@ -1138,10 +1136,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           {section === "search" && (
             <div className="animate-[fadeIn_0.2s_ease-out]">
               <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-neutral-100">
+                <h3 className="text-lg font-medium text-gray-200 dark:text-neutral-100">
                   API Configuration
                 </h3>
-                <p className="text-sm text-gray-500 mt-1">
+                <p className="text-sm text-gray-400 mt-1">
                   Optimize third-party platform API limits and toggle library
                   source scopes.
                 </p>
@@ -1222,7 +1220,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </div>
 
               <div className="mb-8">
-                <h4 className="text-base font-medium text-gray-900 dark:text-neutral-100 mb-4">
+                <h4 className="text-base font-medium text-gray-200 dark:text-neutral-100 mb-4">
                   Enabled Search Categories
                 </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 divide-y sm:divide-y-0 divide-gray-100 dark:divide-neutral-800/60 border border-gray-200 dark:border-neutral-800/60 rounded-xl p-4">
@@ -1254,10 +1252,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           {section === "display" && (
             <div className="animate-[fadeIn_0.2s_ease-out]">
               <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-neutral-100">
+                <h3 className="text-lg font-medium text-gray-200 dark:text-neutral-100">
                   Web UI & Display Controls
                 </h3>
-                <p className="text-sm text-gray-500 mt-1">
+                <p className="text-sm text-gray-400 mt-1">
                   Customize dashboard thumbnails, action controls, and
                   notification popups.
                 </p>
@@ -1309,10 +1307,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           {section === "disabled-backup" && (
             <div className="animate-[fadeIn_0.2s_ease-out]">
               <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-neutral-100">
+                <h3 className="text-lg font-medium text-gray-200 dark:text-neutral-100">
                   Backup & Restore
                 </h3>
-                <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">
+                <p className="mt-1 text-sm text-gray-400 dark:text-neutral-400">
                   Back up settings, profiles, themes, queue history, and
                   local-library metadata in one portable JSON file.
                 </p>
@@ -1343,10 +1341,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="ots-card p-5">
                   <Archive className="h-5 w-5 text-[var(--spotify-green)]" />
-                  <h4 className="mt-3 font-bold text-gray-900 dark:text-neutral-100">
+                  <h4 className="mt-3 font-bold text-gray-200 dark:text-neutral-100">
                     Create a backup
                   </h4>
-                  <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">
+                  <p className="mt-1 text-sm text-gray-400 dark:text-neutral-400">
                     Includes your saved themes, download profiles, statistics
                     history, and library index.
                   </p>
@@ -1360,10 +1358,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
                 <div className="ots-card p-5">
                   <Upload className="h-5 w-5 text-[var(--spotify-green)]" />
-                  <h4 className="mt-3 font-bold text-gray-900 dark:text-neutral-100">
+                  <h4 className="mt-3 font-bold text-gray-200 dark:text-neutral-100">
                     Restore a backup
                   </h4>
-                  <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">
+                  <p className="mt-1 text-sm text-gray-400 dark:text-neutral-400">
                     Restore settings and history without overwriting account
                     credentials.
                   </p>

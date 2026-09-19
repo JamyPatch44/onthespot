@@ -72,9 +72,7 @@ def _version_key(value: str | None) -> tuple[int, int, int, int, int]:
 
 
 def _normalise_release(payload: dict[str, Any], current_version: str) -> dict[str, Any]:
-    raw_assets = (
-        payload.get("assets") if isinstance(payload.get("assets"), list) else None
-    )
+    raw_assets = payload.get("assets") if isinstance(payload.get("assets"), list) else None
     assets: list[dict[str, Any]] = []
     if raw_assets is None:
         logger.error("No Releases unavailable")
@@ -94,13 +92,9 @@ def _normalise_release(payload: dict[str, Any], current_version: str) -> dict[st
         "repository": _repository(),
         "current_version": current_version,
         "latest_version": latest_version,
-        "update_available": _version_key(latest_version)
-        > _version_key(current_version),
+        "update_available": _version_key(latest_version) > _version_key(current_version),
         "release_name": str(payload.get("name") or latest_version),
-        "release_url": str(
-            payload.get("html_url")
-            or f"https://github.com/{_repository()}/releases/latest"
-        ),
+        "release_url": str(payload.get("html_url") or f"https://github.com/{_repository()}/releases/latest"),
         "release_notes": str(payload.get("body") or ""),
         "published_at": payload.get("published_at"),
         "prerelease": bool(payload.get("prerelease")),
@@ -110,7 +104,7 @@ def _normalise_release(payload: dict[str, Any], current_version: str) -> dict[st
     }
 
 
-def check_for_updates(force: bool = False) -> dict[str, Any] | bool:
+def check_for_updates(force: bool = False) -> dict[str, Any] | None:
     """Fetch and return structured release information.
     returns None if an error occurs in the request
 
@@ -137,6 +131,6 @@ def check_for_updates(force: bool = False) -> dict[str, Any] | bool:
                 )
         except Exception as exc:  # Network failures should never affect downloading.
             logger.error("Update check unavailable: %s", exc)
-            return False
+            return None
 
         return result

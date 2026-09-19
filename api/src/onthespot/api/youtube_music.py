@@ -1,11 +1,13 @@
-from hashlib import md5
 import json
 import os
+from hashlib import md5
+
 import requests
 from yt_dlp import YoutubeDL
+
 from ..constants import HTTP_TIMEOUT
 from ..otsconfig import config
-from ..runtimedata import get_logger, account_pool
+from ..runtimedata import account_pool, get_logger
 from ..youtube_auth import youtube_ydl_options
 
 logger = get_logger("api.youtube_music")
@@ -86,8 +88,7 @@ def youtube_music_get_search_results(_, search_term, content_types):
             # or configured on a host that differs from Docker. Public search
             # does not require that session, so retry without authentication.
             logger.warning(
-                "Configured YouTube session could not be used for catalogue "
-                "search; retrying public search: %s",
+                "Configured YouTube session could not be used for catalogue search; retrying public search: %s",
                 exc,
             )
             entries = _youtube_search(search_term, base_opts)
@@ -183,15 +184,9 @@ def youtube_music_get_track_metadata(_, item_id, item=None):
     # Windows takes issue with the following line, not sure why
     # info['release_year'] = info_dict.get('release_date')[:4] #20150504
     release_year = info_dict.get("release_year")
-    info["release_year"] = str(
-        release_year if release_year else info_dict.get("upload_date")[:4]
-    )
+    info["release_year"] = str(release_year if release_year else info_dict.get("upload_date")[:4])
     info["length"] = length
-    info["is_playable"] = (
-        True
-        if info_dict.get("availability") == "public" and not info_dict.get("is_live")
-        else False
-    )
+    info["is_playable"] = True if info_dict.get("availability") == "public" and not info_dict.get("is_live") else False
     info["item_id"] = item_id
     if item.get("parent_category", "") == "album":
         info["track_number"] = item.get("playlist_number")

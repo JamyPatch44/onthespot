@@ -4,19 +4,7 @@
 import threading
 import time
 
-
 from .accounts import get_account_token
-from .runtimedata import (
-    download_queue,
-    download_queue_lock,
-    get_logger,
-    parsing,
-    parsing_lock,
-    pending,
-    pending_lock,
-)
-from .utils import format_local_id
-from .constants import ItemStatus
 from .api.registry import (
     SERVICE_ALBUM_TRACK_ID_FUNCTIONS,
     SERVICE_ARTIST_ALBUM_ID_FUNCTIONS,
@@ -33,6 +21,10 @@ from .api.spotify import (
     spotify_get_playlist_items,
     spotify_get_your_episodes,
 )
+from .basemodels import DownloadProfile, QueueItem
+from .constants import ItemStatus
+from .runtimedata import config, download_queue, download_queue_lock, get_logger, parsing, pending
+from .utils import format_local_id
 
 logger = get_logger("ParsingWorker")
 
@@ -72,16 +64,12 @@ class ParsingWorker:
     def run(self) -> None:
         """Process items from the `parsing` queue until stopped."""
         while self.is_running:
-            if not parsing:
-                time.sleep(0.2)
+            if parsing.empty():
+                time.sleep(1)
                 continue
 
             try:
-                # Pop the next item outside the lock (pop is atomic for dicts
-                # in CPython but we use the lock for cross-platform safety).
-                with parsing_lock:
-                    item_id = next(iter(parsing))
-                    item = parsing.pop(item_id)
+                item = parsing.get_nowait()
 
                 logger.info("Parsing: %s", item)
 
@@ -106,9 +94,7 @@ class ParsingWorker:
         # --- Spotify special collections ---
         if service == "spotify":
             if item_type == "playlist":
-                self._expand_spotify_playlist(
-                    token, item_id
-                )  # URL Passed down
+                self._expand_spotify_playlist(token, item_id)  # URL Passed down
                 return
             if item_type == "liked_songs":
                 self._expand_spotify_liked_songs(token, item_url)  # URL Passed down
@@ -119,9 +105,7 @@ class ParsingWorker:
 
         # --- YouTube Music artist (channel) ---
         if service == "youtube_music" and item_type == "artist":
-            self._expand_youtube_music_channel(
-                token, item_id, service, item_url
-            )  # URL Passed down
+            self._expand_youtube_music_channel(token, item_id, service, item_url)  # URL Passed down
             return
 
         # --- Single downloadable items ---
@@ -131,9 +115,7 @@ class ParsingWorker:
 
         # --- Podcast / audiobook (expand to episodes) ---
         if item_type in ("podcast", "audiobook"):
-            self._expand_podcast(
-                service, item_type, item_id, token, item_url
-            )  # URL Passed down
+            self._expand_podcast(service, item_type, item_id, token, item_url)  # URL Passed down
             return
 
         # --- Album / playlist / mix (expand to tracks) ---
@@ -143,48 +125,49 @@ class ParsingWorker:
 
         # --- Artist / label (expand to albums, then recurse) ---
         if item_type in ("artist", "label"):
-            self._expand_artist_or_label(
-                service, item_type, item_id, token, item_url
-            )  # URL Passed down
+            self._expand_artist_or_label(service, item_type, item_id, token, item_url)  # URL Passed down
             return
 
         # --- Crunchyroll show / season ---
         if item_type in ("show", "season"):
-            self._expand_show(
-                service, item_type, item_id, token, item_url
-            )  # URL Passed down
+            self._expand_show(service, item_type, item_id, token, item_url)  # URL Passed down
             return
 
     # ------------------------------------------------------------------
     # Individual expansion handlers
     # ------------------------------------------------------------------
+    def _get_active_profile(self):
+        profiles = config.get("download_profiles", []) or []
+        active_id = config.get("active_download_profile", "mp3-320")
+        profile = next((entry for entry in profiles if entry.get("id") == active_id), None)
+        if profile is None and profiles:
+            profile = profiles[0]
+        if not profile:
+            return
+        download_profile = DownloadProfile(
+            id=profile.get("id"),
+            name=profile.get("name", profile.get("id", "mp3-320")),
+            format=profile.get("format", "mp3"),
+            bitrate=profile.get("bitrate", 320),
+        )
+        return download_profile
 
     def _enqueue_single_item(self, service, item_type, item_id, item_url=""):
         local_id = format_local_id(item_id)
-        pending.put_nowait(
-            {
-                "local_id": local_id,
-                "item_service": service,
-                "item_type": item_type,
-                "item_id": item_id,
-                "item_url": item_url,
-                "parent_category": item_type,
-                "available": True,
-                "item_status": ItemStatus.WAITING,
-                "item_url": item_url,  # Already included here
-            }
+        item = QueueItem(
+            local_id=local_id,
+            item_service=service,
+            item_type=item_type,
+            item_id=item_id,
+            item_url=item_url,
+            parent_category=item_type,
+            item_status=ItemStatus.WAITING,
+            download_profile=self._get_active_profile(),
         )
+        pending.put_nowait(item)
 
     def _enqueue_playlist_item(self, item):
         """Expose the whole playlist in the UI before downloading starts."""
-        item["queue_preloaded"] = True
-        with download_queue_lock:
-            item["queue_position"] = max(
-                [entry.get("queue_position", -1) for entry in download_queue.values()],
-                default=-1,
-            ) + 1
-            item["priority"] = 0
-            download_queue[item["local_id"]] = item
         pending.put_nowait(item)
 
     def _expand_spotify_playlist(self, token, playlist_id):
@@ -212,22 +195,24 @@ class ParsingWorker:
 
         for index, item in enumerate(items):
             try:
-                track_id = item["track"]["id"]
-                track_type = item["track"]["type"]
+                track_id = item["item"]["id"]
+                track_type = item["item"]["type"]
                 local_id = format_local_id(track_id)
+                item = QueueItem(
+                    local_id=local_id,
+                    item_service="spotify",
+                    item_type=track_type,
+                    item_id=track_id,
+                    item_url=item["item"]["href"],
+                    parent_category="playlist",
+                    playlist_by=playlist_by,
+                    playlist_number=str(index + 1),
+                    playlist_name=playlist_name,
+                    item_status=ItemStatus.WAITING,
+                    download_profile=self._get_active_profile(),
+                )
+                pending.put_nowait(item)
 
-                self._enqueue_playlist_item({
-                    "local_id": local_id,
-                    "item_service": "spotify",
-                    "item_type": track_type,
-                    "item_id": track_id,
-                    "parent_category": "playlist",
-                    "playlist_name": playlist_name,
-                    "playlist_by": playlist_by,
-                    "playlist_number": str(index + 1),
-                    "available": True,
-                    "item_status": ItemStatus.WAITING
-                })
             except TypeError:
                 logger.error("TypeError for %s", item)
 
@@ -235,18 +220,20 @@ class ParsingWorker:
         for index, track in enumerate(spotify_get_liked_songs(token)):
             track_id = track["track"]["id"]
             local_id = format_local_id(track_id)
-            self._enqueue_playlist_item({
-                "local_id": local_id,
-                "item_service": "spotify",
-                "item_type": "track",
-                "item_id": track_id,
-                "parent_category": "playlist",
-                "playlist_name": "Liked Songs",
-                "playlist_by": "me",
-                "playlist_number": str(index + 1),
-                "available": True,
-                "item_status": ItemStatus.WAITING
-            })
+            item = QueueItem(
+                local_id=local_id,
+                item_service="spotify",
+                item_type="track",
+                item_id=track_id,
+                item_url=track["item"]["href"],
+                parent_category="playlist",
+                playlist_by="me",
+                playlist_number=str(index + 1),
+                playlist_name="Liked Songs",
+                item_status=ItemStatus.WAITING,
+                download_profile=self._get_active_profile(),
+            )
+            pending.put_nowait(item)
 
     def _expand_spotify_your_episodes(self, token, item_url):  # Added item_url
         for index, track in enumerate(spotify_get_your_episodes(token)):
@@ -254,22 +241,20 @@ class ParsingWorker:
             if not episode_id:
                 raise NotImplementedError
             local_id = format_local_id(episode_id)
-
-            pending.put_nowait(
-                {
-                    "local_id": local_id,
-                    "item_service": "spotify",
-                    "item_type": "podcast_episode",
-                    "item_id": episode_id,
-                    "parent_category": "playlist",
-                    "playlist_name": "Your Episodes",
-                    "playlist_by": "me",
-                    "playlist_number": str(index + 1),
-                    "available": True,
-                    "item_status": ItemStatus.WAITING,
-                    "item_url": item_url,  # Added to queue item
-                }
+            item = QueueItem(
+                local_id=local_id,
+                item_service="spotify",
+                item_type="podcast_episode",
+                item_id=episode_id,
+                item_url=track["item"]["href"],
+                parent_category="playlist",
+                playlist_by="me",
+                playlist_number=str(index + 1),
+                playlist_name="Your Episodes",
+                item_status=ItemStatus.WAITING,
+                download_profile=self._get_active_profile(),
             )
+            pending.put_nowait(item)
 
     def _expand_youtube_music_channel(
         self, token, item_id, service, item_url
@@ -277,44 +262,37 @@ class ParsingWorker:
         get_track_ids = SERVICE_CHANNEL_TRACK_ID_FUNCTIONS.get(service)
         if get_track_ids is None:
             raise NotImplementedError
-        for track_id in get_track_ids(
-            token, item_id
-        ):  # item_id used as channel ID here
+        for track_id in get_track_ids(token, item_id):  # item_id used as channel ID here
             local_id = format_local_id(track_id)
-            pending.put_nowait(
-                {
-                    "local_id": local_id,
-                    "item_service": service,
-                    "item_type": "track",
-                    "item_id": track_id,
-                    "parent_category": "album",
-                    "available": True,
-                    "item_status": ItemStatus.WAITING,
-                    "item_url": item_url,  # Added to queue item
-                }
+            item = QueueItem(
+                local_id=local_id,
+                item_service=service,
+                item_type="track",
+                item_id=track_id,
+                item_url=item_url,
+                parent_category="album",
+                item_status=ItemStatus.WAITING,
+                download_profile=self._get_active_profile(),
             )
+            pending.put_nowait(item)
 
-    def _expand_podcast(
-        self, service, item_type, item_id, token, item_url
-    ):  # Added item_url
+    def _expand_podcast(self, service, item_type, item_id, token, item_url):  # Added item_url
         get_episode_ids = SERVICE_PODCAST_EPISODE_ID_FUNCTIONS.get(service)
         if get_episode_ids is None:
             raise NotImplementedError
         for episode_id in get_episode_ids(token, item_id):
             local_id = format_local_id(episode_id)
-
-            pending.put_nowait(
-                {
-                    "local_id": local_id,
-                    "item_service": service,
-                    "item_type": "podcast_episode",
-                    "item_id": episode_id,
-                    "parent_category": item_type,
-                    "available": True,
-                    "item_status": ItemStatus.WAITING,
-                    "item_url": item_url,  # Added to queue item
-                }
+            item = QueueItem(
+                local_id=local_id,
+                item_service=service,
+                item_type="podcast_episode",
+                item_id=episode_id,
+                item_url=item_url,
+                parent_category=item_type,
+                item_status=ItemStatus.WAITING,
+                download_profile=self._get_active_profile(),
             )
+            pending.put_nowait(item)
 
     def _expand_collection(self, service, item_type, item_id, token, item_url):
         """Expand an album, playlist, or mix into individual track entries. (No change needed as URL was already passed in)."""
@@ -346,26 +324,22 @@ class ParsingWorker:
 
         for index, track_id in enumerate(track_ids):
             local_id = format_local_id(track_id)
-            queued_item = {
-                "local_id": local_id,
-                "item_service": service,
-                "item_type": "track",
-                "item_id": track_id,
-                "parent_category": effective_category,
-                "playlist_name": playlist_name,
-                "playlist_by": playlist_by,
-                "playlist_number": str(index + 1),
-                "available": True,
-                "item_status": ItemStatus.WAITING
-            }
-            if effective_category == "playlist":
-                self._enqueue_playlist_item(queued_item)
-            else:
-                pending.put_nowait(queued_item)
+            item = QueueItem(
+                local_id=local_id,
+                item_service=service,
+                item_type="track",
+                item_id=track_id,
+                item_url=item_url,
+                parent_category=effective_category,
+                playlist_name=playlist_name,
+                playlist_by=playlist_by,
+                playlist_number=str(index + 1),
+                item_status=ItemStatus.WAITING,
+                download_profile=self._get_active_profile(),
+            )
+            pending.put_nowait(item)
 
-    def _expand_artist_or_label(
-        self, service, item_type, item_id, token, item_url
-    ):  # Added item_url
+    def _expand_artist_or_label(self, service, item_type, item_id, token, item_url):  # Added item_url
         """Expand an artist or label into their albums (which are then re-parsed)."""
         if item_type == "label":
             get_album_ids = SERVICE_LABEL_ALBUM_ID_FUNCTIONS.get(service)
@@ -384,30 +358,25 @@ class ParsingWorker:
                 "item_type": "album",
                 "item_id": album_id,
             }
-            with parsing_lock:
-                parsing[album_id] = new_item
+            parsing.put_nowait(new_item)
 
-    def _expand_show(
-        self, service, item_type, item_id, token, item_url
-    ):  # Added item_url
+    def _expand_show(self, service, item_type, item_id, token, item_url):  # Added item_url
         get_episode_ids = SERVICE_EPISODE_ID_FUNCTIONS.get(service)
         if get_episode_ids is None:
             raise NotImplementedError
         for episode_id in get_episode_ids(token, item_id):
             local_id = format_local_id(episode_id)
-            with pending_lock:
-                pending.put_nowait(
-                    {
-                        "local_id": local_id,
-                        "item_service": service,
-                        "item_type": "episode",
-                        "item_id": episode_id,
-                        "parent_category": item_type,
-                        "available": True,
-                        "item_status": ItemStatus.WAITING,
-                        "item_url": item_url,  # Added to queue item
-                    }
-                )
+            item = QueueItem(
+                local_id=local_id,
+                item_service=service,
+                item_type="episode",
+                item_id=episode_id,
+                item_url=item_url,
+                parent_category=item_type,
+                item_status=ItemStatus.WAITING,
+                download_profile=self._get_active_profile(),
+            )
+            pending.put_nowait(item)
 
     # ------------------------------------------------------------------
     # Error helpers (No changes required here as they don't dispatch further items)
@@ -444,15 +413,10 @@ class ParsingWorker:
                 f"The service may be unavailable.\n\nDetails: {error_str}"
             )
         else:
-            msg = (
-                f"Failed to load {service_name} {item_type}: {error_str}\n\n"
-                f"{item_type.title()} ID: {item_id}"
-            )
+            msg = f"Failed to load {service_name} {item_type}: {error_str}\n\n{item_type.title()} ID: {item_id}"
 
         logger.error(msg)
-        logger.error(
-            "Error in _emit_collection_error for %s, info: %s", item_type, str(exc)
-        )
+        logger.error("Error in _emit_collection_error for %s, info: %s", item_type, str(exc))
 
     def _handle_parsing_error(self, exc, item_type, item_id, item_url, service):
         # ... (This function remains functionally similar and already receives all necessary context)

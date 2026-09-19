@@ -79,7 +79,7 @@ from .deezer import deezer_get_track_metadata
 from .generic import generic_get_track_metadata
 from .qobuz import qobuz_get_track_metadata
 from .soundcloud import soundcloud_get_track_metadata
-from .spotify import spotify_get_track_metadata, spotify_get_podcast_episode_metadata
+from .spotify import spotify_get_podcast_episode_metadata, spotify_get_track_metadata
 from .tidal import tidal_get_track_metadata
 from .youtube_music import youtube_music_get_track_metadata
 
@@ -181,8 +181,8 @@ from .spotify import (
 from .tidal import (
     tidal_get_album_track_ids,
     tidal_get_artist_album_ids,
-    tidal_get_playlist_data,
     tidal_get_mix_data,
+    tidal_get_playlist_data,
 )
 from .youtube_music import (
     youtube_music_get_channel_track_ids,

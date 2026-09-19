@@ -1,7 +1,7 @@
+import { AlertCircle, ArrowDown, ArrowUp, Check, CheckCircle2, CheckSquare, ChevronDown, ChevronUp, CirclePlay, Clock, Cloud, Copy, Disc3, Download, Film, FolderOpen, GripVertical, Headphones, Heart, ListMusic, Music2, Pause, Play, RefreshCw, Square, Trash2, Waves, XCircle, Zap } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
-import { Download, FolderOpen, Trash2, RefreshCw, CheckCircle2, AlertCircle, Clock, Zap, Copy, Check, Play, Pause, XCircle, ListMusic, ChevronDown, ChevronUp, GripVertical, ArrowDown, ArrowUp, Square, CheckSquare, Music2, Waves, Cloud, Disc3, CirclePlay, Heart, Headphones, Film } from 'lucide-react';
-import { DownloadQueueItem, OTSConfig } from '../types';
 import { DownloadProfile, getTargetBackendUrl, QueueBatchAction } from '../lib/api';
+import { DownloadQueueItem, OTSConfig } from '../types';
 import { OtsSelect } from './OtsSelect';
 
 interface DownloadQueueProps {
@@ -646,15 +646,13 @@ export const DownloadQueue: React.FC<DownloadQueueProps> = ({
                     {/* Detailed Metrics Layout */}
                     <div className="flex items-center justify-between text-xs text-gray-500 dark:text-neutral-400 font-medium px-0.5">
                       <div className="flex items-center gap-2 md:gap-3">
-                        <span className="uppercase tracking-wider">{item.format}</span>
+                        <span className="uppercase tracking-wider">.{item.target_format}</span>
                         <span className="w-1 h-1 rounded-full bg-gray-300 dark:bg-neutral-700"></span>
                         <span className="bg-gray-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-gray-700 dark:text-neutral-300 font-mono text-[10px] tracking-wide">
-                          {item.bitrate}
+                          {item.bitrate} kbps
                         </span>
                         <span className="w-1 h-1 rounded-full bg-gray-300 dark:bg-neutral-700"></span>
                         <span>{Number.isFinite(Number(item.file_size)) ? `${(Number(item.file_size) / (1024 * 1024)).toFixed(1)} MB` : '— MB'}</span>
-                        {item.download_speed && <><span className="w-1 h-1 rounded-full bg-gray-300 dark:bg-neutral-700"></span><span>{item.download_speed}</span></>}
-                        {isDownloading && <><span className="w-1 h-1 rounded-full bg-gray-300 dark:bg-neutral-700"></span><span>ETA {formatEta(item.eta_seconds)}</span></>}
                       </div>
                       <span className="text-xs font-mono tabular-nums text-gray-600 dark:text-neutral-300">
                         {Math.round(item.progress)}%

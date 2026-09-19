@@ -5,29 +5,29 @@ import json
 import os
 import re
 import socket
-import threading
 import textwrap
+import threading
 import time
 import traceback
 import uuid
 
-import requests
 import librespot.zeroconf as librespot_zeroconf
+import requests
 from librespot.core import Session
 from librespot.zeroconf import ZeroconfServer
-from ..otsconfig import config, cache_dir
-from ..runtimedata import (
-    get_logger,
-    account_pool,
-    pending,
-    download_queue,
-    pending_lock,
-)
-from ..utils import make_call, conv_list_format, get_primary_composer
+
+from ..otsconfig import cache_dir, config
 from ..resources.exceptions import (
-    SpotifyPlaylistUnavailableError,
     SpotifyAPIUnavailableError,
+    SpotifyPlaylistUnavailableError,
 )
+from ..runtimedata import (
+    account_pool,
+    download_queue,
+    get_logger,
+    pending,
+)
+from ..utils import conv_list_format, get_primary_composer, make_call
 
 logger = get_logger("api.spotify")
 BASE_URL = "https://api.spotify.com/v1"
@@ -78,9 +78,7 @@ def _patch_librespot_zeroconf_runner() -> bool:
         # shutting down one service poison every later reconnect.  Give each
         # discovery server its own state and request pool instead.
         self._HttpRunner__should_stop = False
-        self._HttpRunner__worker = concurrent.futures.ThreadPoolExecutor(
-            thread_name_prefix="spotify-connect-request"
-        )
+        self._HttpRunner__worker = concurrent.futures.ThreadPoolExecutor(thread_name_prefix="spotify-connect-request")
 
     def patched_run(self):
         self._onthespot_runner_thread = threading.current_thread()
@@ -133,15 +131,10 @@ def _patch_librespot_zeroconf_runner() -> bool:
             pass
         self._HttpRunner__worker.shutdown(wait=True, cancel_futures=True, timeout=2)
         runner_thread = getattr(self, "_onthespot_runner_thread", None)
-        if (
-            runner_thread is not None
-            and runner_thread is not threading.current_thread()
-        ):
+        if runner_thread is not None and runner_thread is not threading.current_thread():
             runner_thread.join(timeout=2)
             if runner_thread.is_alive():
-                logger.warning(
-                    "Spotify Connect listener did not stop within two seconds"
-                )
+                logger.warning("Spotify Connect listener did not stop within two seconds")
 
     runner_type.__init__ = patched_init
     runner_type.run = patched_run
@@ -226,8 +219,8 @@ def start_spotify_connect_service():
         # overrides to creation so VPN/virtual adapters cannot make mDNS
         # registration time out or publish an unreachable address.
         if interface:
-            librespot_zeroconf.zeroconf.Zeroconf = lambda *args, **kwargs: (
-                original_zeroconf(*args, interfaces=[interface], **kwargs)
+            librespot_zeroconf.zeroconf.Zeroconf = lambda *args, **kwargs: original_zeroconf(
+                *args, interfaces=[interface], **kwargs
             )
             ZeroconfServer.get_useful_hostname = lambda self: interface
 
@@ -268,9 +261,7 @@ def stop_spotify_connect_service() -> None:
         try:
             server.close()
         except Exception:
-            logger.debug(
-                "Spotify Connect discovery service close failed", exc_info=True
-            )
+            logger.debug("Spotify Connect discovery service close failed", exc_info=True)
 
 
 def spotify_connect_status() -> dict:
@@ -283,9 +274,7 @@ def spotify_connect_status() -> dict:
         }
 
 
-def add_spotify_zeroconf_login(
-    zeroconf_login: dict, account_uuid: str | None = None
-) -> bool:
+def add_spotify_zeroconf_login(zeroconf_login: dict, account_uuid: str | None = None) -> bool:
     """Persist a Spotify Connect login received locally or from a companion.
 
     The companion only forwards the same three fields produced by librespot's
@@ -297,12 +286,7 @@ def add_spotify_zeroconf_login(
     username = str(zeroconf_login.get("username") or "").strip()
     credentials = zeroconf_login.get("credentials")
     credential_type = str(zeroconf_login.get("type") or "").strip()
-    if (
-        not username
-        or not isinstance(credentials, str)
-        or not credentials
-        or not credential_type
-    ):
+    if not username or not isinstance(credentials, str) or not credentials or not credential_type:
         return False
     if any(
         isinstance(account, dict)
@@ -342,9 +326,7 @@ def spotify_get_oauth_token():
     no user context, so it can't read /me/* (liked songs, your episodes)."""
     # str() guards against the CLI / web settings coercing an all-digit value to int.
     client_id = str(config.get("spotify_webapi_override_client_id", "") or "").strip()
-    client_secret = str(
-        config.get("spotify_webapi_override_client_secret", "") or ""
-    ).strip()
+    client_secret = str(config.get("spotify_webapi_override_client_secret", "") or "").strip()
     if not client_id or not client_secret:
         return None
 
@@ -356,9 +338,7 @@ def spotify_get_oauth_token():
         ):
             return _oauth_token_cache["access_token"]
 
-        credentials_b64 = base64.b64encode(
-            f"{client_id}:{client_secret}".encode()
-        ).decode()
+        credentials_b64 = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
         try:
             resp = requests.post(
                 "https://accounts.spotify.com/api/token",
@@ -373,9 +353,7 @@ def spotify_get_oauth_token():
             logger.error("[OAUTH] Token request failed: %s", str(e))
             return None
         if resp.status_code != 200:
-            logger.error(
-                "Failed to get access token: %d - %s", resp.status_code, resp.text
-            )
+            logger.error("Failed to get access token: %d - %s", resp.status_code, resp.text)
             return None
         try:
             data = resp.json()
@@ -388,9 +366,7 @@ def spotify_get_oauth_token():
         _oauth_token_cache["client_id"] = client_id
         # Refresh a little early (5 min buffer) to avoid mid-call expiry.
         _oauth_token_cache["expires_at"] = time.time() + expires_in - 300
-        logger.info(
-            "[AUTH] Using Web API override credentials (OAuth) for Spotify metadata/search"
-        )
+        logger.info("[AUTH] Using Web API override credentials (OAuth) for Spotify metadata/search")
         return _oauth_token_cache["access_token"]
 
 
@@ -418,9 +394,7 @@ def spotify_playlist_call(token, url):
     except requests.exceptions.RequestException:
         resp = None
     if not resp and token is not None:
-        librespot_headers = {
-            "Authorization": f"Bearer {token.tokens().get('user-read-email')}"
-        }
+        librespot_headers = {"Authorization": f"Bearer {token.tokens().get('user-read-email')}"}
         if librespot_headers != headers:
             try:
                 resp = make_call(url, headers=librespot_headers, skip_cache=True)
@@ -463,9 +437,7 @@ class MirrorSpotifyPlayback:
         thread.join(timeout=timeout)
         with self._lock:
             if thread.is_alive():
-                logger.warning(
-                    "SpotifyMirrorPlayback did not stop within %.1f seconds", timeout
-                )
+                logger.warning("SpotifyMirrorPlayback did not stop within %.1f seconds", timeout)
             elif self.thread is thread:
                 self.thread = None
 
@@ -481,9 +453,7 @@ class MirrorSpotifyPlayback:
             try:
                 resp = requests.get(
                     url,
-                    headers={
-                        "Authorization": f"Bearer {token.get('user-read-currently-playing')}"
-                    },
+                    headers={"Authorization": f"Bearer {token.get('user-read-currently-playing')}"},
                     timeout=10,
                 )
             except requests.RequestException:
@@ -509,17 +479,13 @@ class MirrorSpotifyPlayback:
                         playlist_by = ""
                         if data["context"] is not None:
                             if data["context"].get("type") == "playlist":
-                                match = re.search(
-                                    r"spotify:playlist:(\w+)", data["context"]["uri"]
-                                )
+                                match = re.search(r"spotify:playlist:(\w+)", data["context"]["uri"])
                                 if match:
                                     playlist_id = match.group(1)
                                 else:
                                     continue
                                 token = get_account_token("spotify")
-                                playlist_name, playlist_by = spotify_get_playlist_data(
-                                    token, playlist_id
-                                )
+                                playlist_name, playlist_by = spotify_get_playlist_data(token, playlist_id)
                                 parent_category = "playlist"
                             elif data["context"].get("type") == "collection":
                                 playlist_name = "Liked Songs"
@@ -529,28 +495,26 @@ class MirrorSpotifyPlayback:
                                 parent_category = "album"
                         # Use item id to prevent duplicates
                         # local_id = format_local_id(item_id)
-                        with pending_lock:
-                            pending.put_nowait(
-                                item={
-                                    "local_id": item_id,
-                                    "item_service": "spotify",
-                                    "item_type": "track",
-                                    "item_id": item_id,
-                                    "parent_category": parent_category,
-                                    "playlist_name": playlist_name,
-                                    "playlist_by": playlist_by,
-                                    "playlist_number": "?",
-                                }
-                            )
+
+                        # pending.put_nowait(
+                        #    item={
+                        #        "local_id": item_id,
+                        #        "item_service": "spotify",
+                        #        "item_type": "track",
+                        #        "item_id": item_id,
+                        #        "parent_category": parent_category,
+                        #        "playlist_name": playlist_name,
+                        #        "playlist_by": playlist_by,
+                        #        "playlist_number": "?",
+                        #    }
+                        # )
                         logger.info(
                             "Mirror Spotify Playback added track to download queue: https://open.spotify.com/track/%s",
                             item_id,
                         )
                         continue
                 else:
-                    logger.info(
-                        "Spotify API does not return enough data to parse currently playing episodes."
-                    )
+                    logger.info("Spotify API does not return enough data to parse currently playing episodes.")
                     continue
             else:
                 continue
@@ -603,9 +567,7 @@ def spotify_new_session():
                 )
                 return False
             except Exception as e:
-                logger.error(
-                    "Unknown Error: %s\nTraceback: %s", str(e), traceback.format_exc()
-                )
+                logger.error("Unknown Error: %s\nTraceback: %s", str(e), traceback.format_exc())
                 return False
             # Keep the discovery service alive after pairing.  Closing the
             # whole server here was the reason Spotify stopped showing
@@ -640,26 +602,16 @@ def spotify_login_user(account):
                 traceback.format_exc(),
             )
 
-        lconfig = (
-            Session.Configuration.Builder()
-            .set_stored_credential_file(session_json_path)
-            .build()
-        )
+        lconfig = Session.Configuration.Builder().set_stored_credential_file(session_json_path).build()
         # For some reason initialising session as None prevents premature application exit
         session = None
         try:
-            session = (
-                Session.Builder(conf=lconfig).stored_file(session_json_path).create()
-            )
+            session = Session.Builder(conf=lconfig).stored_file(session_json_path).create()
         except Exception:
             time.sleep(3)
-            session = (
-                Session.Builder(conf=lconfig).stored_file(session_json_path).create()
-            )
+            session = Session.Builder(conf=lconfig).stored_file(session_json_path).create()
         logger.debug("Session created")
-        logger.info(
-            "Login successful for user '%s'", username[:4] + "****" if username else ""
-        )
+        logger.info("Login successful for user '%s'", username[:4] + "****" if username else "")
         account_type = session.get_user_attribute("type")
         bitrate = "160k"
         if account_type == "premium":
@@ -680,9 +632,7 @@ def spotify_login_user(account):
         )
         return True
     except Exception as e:
-        logger.error(
-            "Unknown Exception: %s\nTraceback: %s", str(e), traceback.format_exc()
-        )
+        logger.error("Unknown Exception: %s\nTraceback: %s", str(e), traceback.format_exc())
         account_pool.append(
             {
                 "uuid": luuid,
@@ -701,9 +651,7 @@ def spotify_login_user(account):
 
 
 def spotify_re_init_session(account, dead_session=None):
-    session_json_path = os.path.join(
-        cache_dir(), "sessions", f"ots_login_{account['uuid']}.json"
-    )
+    session_json_path = os.path.join(cache_dir(), "sessions", f"ots_login_{account['uuid']}.json")
     with _session_reinit_lock:
         old_session = account.get("login", {}).get("session")
         if dead_session is not None and old_session is not dead_session:
@@ -718,14 +666,8 @@ def spotify_re_init_session(account, dead_session=None):
 
         def _build():
             try:
-                cfg = (
-                    Session.Configuration.Builder()
-                    .set_stored_credential_file(session_json_path)
-                    .build()
-                )
-                session = (
-                    Session.Builder(conf=cfg).stored_file(session_json_path).create()
-                )
+                cfg = Session.Configuration.Builder().set_stored_credential_file(session_json_path).build()
+                session = Session.Builder(conf=cfg).stored_file(session_json_path).create()
                 result["session"] = session
                 result["account_type"] = session.get_user_attribute("type")
             except Exception as e:
@@ -735,9 +677,7 @@ def spotify_re_init_session(account, dead_session=None):
         builder.start()
         builder.join(timeout=_SESSION_REINIT_TIMEOUT)
         if builder.is_alive():
-            logger.error(
-                "Session re-init timed out, network may be unavailable. Will retry later."
-            )
+            logger.error("Session re-init timed out, network may be unavailable. Will retry later.")
             return
         session = result.get("session")
         if session is None:
@@ -755,10 +695,7 @@ def spotify_re_init_session(account, dead_session=None):
 def reinit_spotify_session(token):
 
     for account in account_pool:
-        if (
-            account.get("service") == "spotify"
-            and account.get("login", {}).get("session") is token
-        ):
+        if account.get("service") == "spotify" and account.get("login", {}).get("session") is token:
             logger.info("Spotify session connection lost, re-initializing...")
             spotify_re_init_session(account, dead_session=token)
             return
@@ -806,9 +743,7 @@ def spotify_get_playlist_data(token, playlist_id):
     logger.info("Get playlist data for playlist: %s", playlist_id)
     resp = spotify_playlist_call(token, f"{BASE_URL}/playlists/{playlist_id}")
     if not resp:
-        raise SpotifyPlaylistUnavailableError(
-            f"Failed to fetch playlist data for '{playlist_id}'"
-        )
+        raise SpotifyPlaylistUnavailableError(f"Failed to fetch playlist data for '{playlist_id}'")
     return resp["name"], resp["owner"]["display_name"]
 
 
@@ -842,9 +777,7 @@ def spotify_get_lyrics(token, item_id, item_type, metadata, filepath):
 
                 for key in metadata.keys():
                     value = metadata[key]
-                    if key in ["title", "track_title", "tracktitle"] and config.get(
-                        "embed_name"
-                    ):
+                    if key in ["title", "track_title", "tracktitle"] and config.get("embed_name"):
                         title = value
                         lyrics.append(f"[ti:{title}]")
                     elif key == "artists" and config.get("embed_artist"):
@@ -866,9 +799,7 @@ def spotify_get_lyrics(token, item_id, item_type, metadata, filepath):
                         digit = "0"
                     else:
                         digit = ""
-                    lyrics.append(
-                        f"[length:{digit}{round((l_ms / 1000) / 60)}:{round((l_ms / 1000) % 60)}]\n"
-                    )
+                    lyrics.append(f"[length:{digit}{round((l_ms / 1000) / 60)}:{round((l_ms / 1000) % 60)}]\n")
 
             default_length = len(lyrics)
 
@@ -877,14 +808,10 @@ def spotify_get_lyrics(token, item_id, item_type, metadata, filepath):
                     for line in resp["lyrics"]["lines"]:
                         minutes, seconds = divmod(int(line["startTimeMs"]) / 1000, 60)
                         if not config.get("only_download_plain_lyrics"):
-                            lyrics.append(
-                                f"[{minutes:0>2.0f}:{seconds:05.2f}] {line['words']}"
-                            )
+                            lyrics.append(f"[{minutes:0>2.0f}:{seconds:05.2f}] {line['words']}")
                         else:
                             lyrics.append(line["words"])
-                elif resp["lyrics"]["syncType"] == "UNSYNCED" and not config.get(
-                    "only_download_synced_lyrics"
-                ):
+                elif resp["lyrics"]["syncType"] == "UNSYNCED" and not config.get("only_download_synced_lyrics"):
                     lyrics = [line["words"] for line in resp["lyrics"]["lines"]]
 
             elif item_type == "episode":
@@ -892,9 +819,7 @@ def spotify_get_lyrics(token, item_id, item_type, metadata, filepath):
                     for line in resp["section"]:
                         try:
                             minutes, seconds = divmod(int(line["startMs"]) / 1000, 60)
-                            lyrics.append(
-                                f"[{minutes:0>2.0f}:{seconds:05.2f}] {line['text']['sentence']['text']}"
-                            )
+                            lyrics.append(f"[{minutes:0>2.0f}:{seconds:05.2f}] {line['text']['sentence']['text']}")
                         except KeyError as e:
                             logger.debug("Invalid line: %s", str(e))
                 else:
@@ -943,7 +868,7 @@ def spotify_get_playlist_items(token, playlist_id):
     limit = 100
 
     while True:
-        url = f"{BASE_URL}/playlists/{playlist_id}/tracks?additional_types=track%2Cepisode&offset={offset}&limit={limit}"
+        url = f"{BASE_URL}/playlists/{playlist_id}/items?additional_types=track%2Cepisode&offset={offset}&limit={limit}"
         resp = spotify_playlist_call(token, url)
         if not resp:
             raise Exception(f"Failed to fetch playlist items for '{playlist_id}'")
@@ -1054,9 +979,7 @@ def spotify_get_search_results(
 
     # None/non-dict (permanent error) or an API error payload (e.g. {'error': ...}).
     if not isinstance(data, dict) or "error" in data:
-        logger.error(
-            "Spotify search did not return results for '%s': %s", search_term, str(data)
-        )
+        logger.error("Spotify search did not return results for '%s': %s", search_term, str(data))
         return []
 
     search_results = []
@@ -1084,9 +1007,7 @@ def spotify_get_search_results(
                     album_images = (item.get("album") or {}).get("images") or []
                     item_thumbnail_url = album_images[-1]["url"] if album_images else ""
                 elif item_type == "album":
-                    rel_match = re.search(
-                        r"(\d{4})", item.get("release_date", "") or ""
-                    )
+                    rel_match = re.search(r"(\d{4})", item.get("release_date", "") or "")
                     rel_year = rel_match.group(1) if rel_match else "?"
                     item_name = f"[Y:{rel_year}] [T:{item.get('total_tracks', '?')}] {item['name']}"
                     item_by = config.get("metadata_separator").join(
@@ -1135,9 +1056,7 @@ def spotify_get_search_results(
                     }
                 )
             except (KeyError, IndexError, TypeError) as e:
-                logger.warning(
-                    "Skipping malformed '%s' search result: %s", item_type, str(e)
-                )
+                logger.warning("Skipping malformed '%s' search result: %s", item_type, str(e))
                 continue
     return search_results
 
@@ -1161,9 +1080,7 @@ def spotify_get_track_metadata(token, item_id):
     )
 
     headers = spotify_get_auth_header(token)
-    librespot_headers = {
-        "Authorization": f"Bearer {token.tokens().get('user-read-email')}"
-    }
+    librespot_headers = {"Authorization": f"Bearer {token.tokens().get('user-read-email')}"}
 
     delay = config.get("api_request_delay", 0.1)
 
@@ -1174,9 +1091,7 @@ def spotify_get_track_metadata(token, item_id):
     # A None result means a permanent (non-retryable) error such as 401/403/404.
     # Bail out with a clear message rather than crashing on track_data.get(...).
     if not track or not track.get("id"):
-        raise SpotifyAPIUnavailableError(
-            f"No track data returned for '{item_id}' (rate limited or unavailable)"
-        )
+        raise SpotifyAPIUnavailableError(f"No track data returned for '{item_id}' (rate limited or unavailable)")
     track_data = {"tracks": [track]}
     time.sleep(delay)
 
@@ -1214,9 +1129,7 @@ def spotify_get_track_metadata(token, item_id):
     time.sleep(delay)
     if config.get("fetch_audio_features", True):
         try:
-            track_audio_data = make_call(
-                f"{BASE_URL}/audio-features/{item_id}", headers=headers
-            )
+            track_audio_data = make_call(f"{BASE_URL}/audio-features/{item_id}", headers=headers)
             time.sleep(delay)
         except Exception:
             track_audio_data = ""
@@ -1251,9 +1164,7 @@ def spotify_get_track_metadata(token, item_id):
 
     info = {}
     info["artists"] = artists
-    info["album_name"] = (
-        track_data.get("tracks", [{}])[0].get("album", {}).get("name", "")
-    )
+    info["album_name"] = track_data.get("tracks", [{}])[0].get("album", {}).get("name", "")
     info["album_type"] = album_data.get("album_type")
 
     # Album artists - available in both embedded and full album data
@@ -1262,62 +1173,39 @@ def spotify_get_track_metadata(token, item_id):
         info["album_artists"] = album_artists_data[0].get("name")
     else:
         # Fallback to track's first artist if album artists not available
-        info["album_artists"] = (
-            track_data.get("tracks", [{}])[0].get("artists", [{}])[0].get("name", "")
-        )
+        info["album_artists"] = track_data.get("tracks", [{}])[0].get("artists", [{}])[0].get("name", "")
 
     info["title"] = track_data.get("tracks", [{}])[0].get("name")
 
     try:
-        info["image_url"] = (
-            track_data.get("tracks", [{}])[0]
-            .get("album", {})
-            .get("images", [{}])[0]
-            .get("url")
-        )
+        info["image_url"] = track_data.get("tracks", [{}])[0].get("album", {}).get("images", [{}])[0].get("url")
     except IndexError:
         info["image_url"] = ""
         logger.info("Invalid thumbnail")
 
-    info["release_year"] = (
-        track_data.get("tracks", [{}])[0]
-        .get("album", {})
-        .get("release_date")
-        .split("-")[0]
-    )
+    info["release_year"] = track_data.get("tracks", [{}])[0].get("album", {}).get("release_date").split("-")[0]
     info["track_number"] = track_number
-    info["total_tracks"] = (
-        track_data.get("tracks", [{}])[0].get("album", {}).get("total_tracks")
-    )
+    info["total_tracks"] = track_data.get("tracks", [{}])[0].get("album", {}).get("total_tracks")
     info["disc_number"] = track_data.get("tracks", [{}])[0].get("disc_number")
 
     # Total discs - only available from full album data
     if config.get("fetch_extended_album_metadata", True) and "tracks" in album_data:
         info["total_discs"] = sorted(
-            [
-                trk.get("disc_number", 0)
-                for trk in album_data.get("tracks", {}).get("items", [])
-            ]
+            [trk.get("disc_number", 0) for trk in album_data.get("tracks", {}).get("items", [])]
         )[-1]
     else:
         info["total_discs"] = 1  # Default to 1 disc if not fetching extended album data
 
     # Genre - only available if artist metadata was fetched
-    info["genre"] = (
-        conv_list_format(artist_data.get("genres", [])) if artist_data else ""
-    )
+    info["genre"] = conv_list_format(artist_data.get("genres", [])) if artist_data else ""
 
     # Label and copyright - only available from full album data
     info["label"] = album_data.get("label", "")
-    info["copyright"] = conv_list_format(
-        [holder.get("text") for holder in album_data.get("copyrights", [])]
-    )
+    info["copyright"] = conv_list_format([holder.get("text") for holder in album_data.get("copyrights", [])])
     info["explicit"] = track_data.get("tracks", [{}])[0].get("explicit", False)
     info["isrc"] = track_data.get("tracks", [{}])[0].get("external_ids", {}).get("isrc")
     info["length"] = str(track_data.get("tracks", [{}])[0].get("duration_ms"))
-    info["item_url"] = (
-        track_data.get("tracks", [{}])[0].get("external_urls", {}).get("spotify")
-    )
+    info["item_url"] = track_data.get("tracks", [{}])[0].get("external_urls", {}).get("spotify")
     # info['popularity'] = track_data.get('tracks', [{}])[0].get('popularity')
     info["item_id"] = track_data.get("tracks", [{}])[0].get("id")
     info["is_playable"] = track_data.get("tracks", [{}])[0].get("is_playable", True)
@@ -1326,26 +1214,14 @@ def spotify_get_track_metadata(token, item_id):
         local_credits = {}
         for credit_block in credits_data.get("roleCredits", []):
             role_title = credit_block.get("roleTitle").lower()
-            local_credits[role_title] = [
-                artist.get("name") for artist in credit_block.get("artists", [])
-            ]
+            local_credits[role_title] = [artist.get("name") for artist in credit_block.get("artists", [])]
         info["performers"] = conv_list_format(
-            [
-                item
-                for item in local_credits.get("performers", [])
-                if isinstance(item, str)
-            ]
+            [item for item in local_credits.get("performers", []) if isinstance(item, str)]
         )
         info["producers"] = conv_list_format(
-            [
-                item
-                for item in local_credits.get("producers", [])
-                if isinstance(item, str)
-            ]
+            [item for item in local_credits.get("producers", []) if isinstance(item, str)]
         )
-        info["writers"] = conv_list_format(
-            [item for item in local_credits.get("writers", []) if isinstance(item, str)]
-        )
+        info["writers"] = conv_list_format([item for item in local_credits.get("writers", []) if isinstance(item, str)])
         info["composer"] = info["writers"]
         if config.get("prefer_composer_as_album_artist") and info["composer"]:
             info["album_artists"] = get_primary_composer(info["composer"])
@@ -1385,12 +1261,8 @@ def spotify_get_podcast_episode_metadata(token, episode_id):
     headers = spotify_get_auth_header(token)
     episode_data = make_call(f"{BASE_URL}/episodes/{episode_id}", headers=headers)
     if not episode_data:
-        raise Exception(
-            f"No episode data returned for '{episode_id}' (rate limited or unavailable)"
-        )
-    show_episode_ids = spotify_get_podcast_episode_ids(
-        token, episode_data.get("show", {}).get("id")
-    )
+        raise Exception(f"No episode data returned for '{episode_id}' (rate limited or unavailable)")
+    show_episode_ids = spotify_get_podcast_episode_ids(token, episode_data.get("show", {}).get("id"))
     # I believe audiobook ids start with a 7 but to verify you can use https://api.spotify.com/v1/audiobooks/{id}
     # the endpoint could possibly be used to mark audiobooks in genre but it doesn't really provide any additional
     # metadata compared to show_data beyond abridged and unabridged.
@@ -1416,16 +1288,10 @@ def spotify_get_podcast_episode_metadata(token, episode_id):
     # info['total_tracks'] = episode_data.get('show', {}).get('total_episodes', 0)
     info["total_tracks"] = len(show_episode_ids)
     info["artists"] = conv_list_format([episode_data.get("show", {}).get("publisher")])
-    info["album_artists"] = conv_list_format(
-        [episode_data.get("show", {}).get("publisher")]
-    )
+    info["album_artists"] = conv_list_format([episode_data.get("show", {}).get("publisher")])
     info["language"] = conv_list_format(episode_data.get("languages", []))
     description = episode_data.get("description")
-    info["description"] = str(
-        description
-        if description
-        else episode_data.get("show", {}).get("description", "")
-    )
+    info["description"] = str(description if description else episode_data.get("show", {}).get("description", ""))
     info["copyright"] = conv_list_format(copyrights)
     info["length"] = str(episode_data.get("duration_ms"))
     info["explicit"] = episode_data.get("explicit")

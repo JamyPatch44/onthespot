@@ -65,7 +65,7 @@ from .library import (
     verify_file,
 )
 from .otsconfig import config
-from .parse_item import get_search_results
+from .parse_item import search
 from .parsingworker import ParsingWorker
 from .runtimedata import (
     account_pool,
@@ -76,9 +76,7 @@ from .runtimedata import (
     get_rate_limit_state,
     notification_hook,
     parsing,
-    parsing_lock,
     pending,
-    pending_lock,
     progress_hook,
     subscribe_websocket,
     unsubscribe_websocket,
@@ -87,7 +85,7 @@ from .statistics import clear_history, export_history, import_history
 from .updater import (
     check_for_updates,
 )
-from .utils import open_item, retry_single_item
+from .utils import open_item
 from .youtube_auth import (
     managed_youtube_cookie_path,
     store_youtube_cookie_file,
@@ -96,7 +94,7 @@ from .youtube_auth import (
     youtube_auth_status,
 )
 
-log_level = int(os.environ.get("LOG_LEVEL", 20))
+log_level = os.environ.get("LOG_LEVEL", "INFO")
 logger = get_logger("gui")
 # ---------------------------------------------------------------------------
 # ONTHESPOT BOOTSTRAP
@@ -175,15 +173,6 @@ def add_tidal_account_worker(device_code):
         notification_hook("Login Complete", "Refresh the page")
     else:
         logger.info("Account Already Exists")
-
-
-def search(search_term, search_filters: dict | None = None) -> None:
-    """
-    Parse the url and add the item to the pending queue.
-    """
-
-    results = get_search_results(search_term)
-    return results
 
 
 def search_service_catalogs(
@@ -455,13 +444,13 @@ async def query_url(q: str | None = None, filters: dict | None = None):
     """
     Endpoint to perform a URL-based search.
 
-    :param q: The search term.
-    :param filters: Optional dictionary of filters for the search.
-    :return: Search results.
+    :param q: The search url.
+    :param filters: Optional dictionary of filters for the search !! Not Implemented Yet.
+    :return: True or False depending on the result of the search function.
     """
     result = None
     if q:
-        result = search(q, filters)
+        result = search(q)
     return result
 
 
@@ -573,30 +562,26 @@ async def query_download_queue():
         return (position, -priority, numeric_id)
 
     with download_queue_lock:
-        return dict(sorted(download_queue.items(), key=sort_key))
+        return download_queue.items()
 
 
 @app.get("/queue/downloads/state")
 async def query_download_state():
     with download_queue_lock:
         active = [
-            item
-            for item in download_queue.values()
-            if item.get("item_status") in (ItemStatus.DOWNLOADING, ItemStatus.PAUSED)
+            item for item in download_queue.values() if item.item_status in (ItemStatus.DOWNLOADING, ItemStatus.PAUSED)
         ]
         return {
             "paused": download_paused.is_set(),
             "active": len(active),
-            "speed": sum(float(item.get("download_speed_bps", 0) or 0) for item in active),
-            "eta_seconds": max(
-                [item.get("eta_seconds") or 0 for item in active],
-                default=0,
-            ),
+            "speed": "nd",
+            "eta_seconds": "nd",
         }
 
 
 @app.post("/queue/downloads/reorder")
 async def reorder_download_queue(order: QueueOrder):
+    raise NotImplementedError
     requested = [str(local_id) for local_id in order.local_ids]
     with download_queue_lock:
         for position, local_id in enumerate(requested):
@@ -617,7 +602,7 @@ async def reorder_download_queue(order: QueueOrder):
 async def batch_download_queue_action(batch: QueueBatch):
     """Apply one control to several queue items at once."""
     action = batch.action.strip().lower()
-    allowed = {"pause", "resume", "retry", "cancel", "delete", "priority", "profile"}
+    allowed = {"retry", "cancel", "delete", "profile"}
     if action not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported queue batch action")
     if action == "profile" and not batch.profile_id:
@@ -627,8 +612,8 @@ async def batch_download_queue_action(batch: QueueBatch):
     ):
         raise HTTPException(status_code=400, detail="Unknown download profile")
 
-    selected: list[dict] = []
-    retry_items: list[dict] = []
+    selected: list[QueueItem] = []
+    retry_items: list[QueueItem] = []
     changed = 0
     with download_queue_lock:
         for local_id in {str(value) for value in batch.local_ids}:
@@ -636,60 +621,37 @@ async def batch_download_queue_action(batch: QueueBatch):
             if item is None:
                 continue
             selected.append(item)
-            if action == "pause":
-                item["_pause_requested"] = True
-                item["item_status"] = ItemStatus.PAUSED
-            elif action == "resume":
-                item["_pause_requested"] = False
-                if not item.get("_active_download"):
-                    item["item_status"] = ItemStatus.WAITING
-            elif action == "cancel":
-                item["_pause_requested"] = False
-                item["_manual_cancelled"] = True
-                item["available"] = False
-                item["item_status"] = ItemStatus.CANCELLED
-                item["error"] = "Cancelled by the user."
+            if action == "cancel":
+                item.item_status = ItemStatus.CANCELLED
+                item.error = "Cancelled by the user."
             elif action == "delete":
-                if item.get("_active_download"):
-                    item["_pause_requested"] = False
-                    item["_manual_cancelled"] = True
-                    item["_discarded"] = True
-                    item["available"] = False
-                    item["item_status"] = ItemStatus.CANCELLED
-                    item["error"] = "Deleted by the user."
+                if item.item_status == ItemStatus.DOWNLOADING:
+                    item.item_status = ItemStatus.CANCELLED
+                    item.error = "Deleted by the user."
                 else:
-                    item["_discarded"] = True
                     download_queue.pop(local_id, None)
             elif action == "retry":
                 retry_items.append(item)
-            elif action == "priority":
-                item["priority"] = int(batch.priority or 0)
             elif action == "profile":
                 profile = next(
                     entry
                     for entry in (config.get("download_profiles", []) or [])
                     if entry.get("id") == batch.profile_id
                 )
-                item["profile_id"] = profile.get("id")
-                item["profile_name"] = profile.get("name", profile.get("id", "Default"))
+                item.download_profile.id = profile.get("id")
+                item.download_profile.name = profile.get("name", profile.get("id", "Default"))
             changed += 1
 
-        if action == "priority":
-            waiting = sorted(
-                (item for item in download_queue.values() if item.get("item_status") == ItemStatus.WAITING),
-                key=lambda item: (
-                    -int(item.get("priority", 0) or 0),
-                    int(item.get("queue_position", 10**9) or 10**9),
-                ),
-            )
-            for position, item in enumerate(waiting):
-                item["queue_position"] = position
-
     for item in retry_items:
-        retry_single_item(item)
+        retry_item = item
+        retry_item.item_status = ItemStatus.WAITING
+        retry_item.error = ""
+        retry_item.retry_count = 0
+        download_queue.pop(retry_item.local_id, None)
+        pending.put_nowait(retry_item)
     for item in selected:
         if action in {"pause", "resume", "cancel"}:
-            progress_hook(item, int(item.get("progress", 0) or 0), item.get("item_status"))
+            progress_hook(item, item.progress, item.item_status)
 
     if action == "resume" and selected:
         notification_hook("Downloads resumed", f"Resumed {len(selected)} selected item(s).")
@@ -703,33 +665,37 @@ async def verify_download_queue(request: QueueVerify):
         candidates = [
             item
             for item in download_queue.values()
-            if item.get("item_status") in (ItemStatus.DOWNLOADED, ItemStatus.ALREADY_EXISTS)
-            and (not request.local_ids or item.get("local_id") in request.local_ids)
+            if item.item_status in (ItemStatus.DOWNLOADED, ItemStatus.ALREADY_EXISTS)
+            and (not request.local_ids or item.local_id in request.local_ids)
         ]
 
-    corrupt: list[dict] = []
+    corrupt: list[QueueItem] = []
     for item in candidates:
-        path = item.get("file_path") or ""
+        path = item.file_path or ""
         try:
             result = verify_file(path)
         except ValueError as exc:
             result = {"path": path, "valid": False, "reason": str(exc), "size": 0}
         if not result.get("valid"):
-            item["item_status"] = ItemStatus.FAILED
-            item["progress"] = 0
-            item["error"] = f"Verification failed: {result.get('reason', 'invalid file')}"
-            item["_stats_recorded"] = False
+            item.item_status = ItemStatus.FAILED
+            item.progress = 0
+            item.error = f"Verification failed: {result.get('reason', 'invalid file')}"
             corrupt.append(item)
 
     if request.retry:
         for item in corrupt:
-            retry_single_item(item)
+            retry_item = item
+            retry_item.item_status = ItemStatus.WAITING
+            retry_item.error = ""
+            retry_item.retry_count = 0
+            download_queue.pop(retry_item.local_id, None)
+            pending.put_nowait(retry_item)
     return {
         "checked": len(candidates),
         "healthy": len(candidates) - len(corrupt),
         "corrupt": len(corrupt),
         "retried": len(corrupt) if request.retry else 0,
-        "items": [{"local_id": item.get("local_id"), "error": item.get("error", "")} for item in corrupt],
+        "items": [{"local_id": item.local_id, "error": item.error} for item in corrupt],
     }
 
 
@@ -777,9 +743,9 @@ async def remove_queue_items(status: str = "Completed"):
         keys_to_remove = [
             key
             for key, item in download_queue.items()
-            if item["item_status"] == status
-            or (completed_status and item["item_status"] == "Already Exists")
-            or (failed_status and item["item_status"] in failure_values)
+            if item.item_status == status
+            or (completed_status and item.item_status == ItemStatus.ALREADY_EXISTS)
+            or (failed_status and item.item_status in failure_values)
         ]
         for key in keys_to_remove:
             download_queue.pop(key, None)
@@ -802,46 +768,38 @@ async def queue_action(lid: str, action: str):
     result_status = None
     with download_queue_lock:
         for key, item in download_queue.items():
-            if item["local_id"] == lid:
+            if item.local_id == int(lid):
                 match action:
                     case "retry":
                         # need to retry later to free the lock
                         retry_item = item
                     case "cancel":
-                        item["_pause_requested"] = False
-                        item["_manual_cancelled"] = True
-                        item["available"] = False
-                        item["item_status"] = ItemStatus.CANCELLED
-                        item["error"] = "Cancelled by the user."
+                        item.item_status = ItemStatus.CANCELLED
+                        item.error = "Cancelled by the user."
                         changed_item = item
                         notification = (
                             "Download cancelled",
-                            item.get("name", "The current track"),
+                            item.item_id,
                         )
                         result_status = ItemStatus.CANCELLED
                     case "delete":
-                        if item.get("_active_download"):
-                            item["_pause_requested"] = False
-                            item["_manual_cancelled"] = True
-                            item["_discarded"] = True
-                            item["available"] = False
-                            item["item_status"] = ItemStatus.CANCELLED
-                            item["error"] = "Deleted by the user."
+                        if item.item_status == ItemStatus.DOWNLOADING:
+                            item.item_status = ItemStatus.CANCELLED
+                            item.error = "Deleted by the user."
                             changed_item = item
                             notification = (
                                 "Download removed",
-                                item.get("name", "The current track"),
+                                item.item_id,
                             )
                             result_status = ItemStatus.CANCELLED
                         else:
-                            item["_discarded"] = True
                             download_queue.pop(key)
                             result_status = ItemStatus.DELETED
                     case _:
                         return {"success": False, "error": "Unknown queue action."}
                 break
     if changed_item is not None:
-        raw_progress = changed_item.get("progress", changed_item.get("item_progress", 0))
+        raw_progress = changed_item.progress
         try:
             current_progress = int(float(raw_progress or 0))
         except (TypeError, ValueError):
@@ -853,7 +811,11 @@ async def queue_action(lid: str, action: str):
             notification_hook(*notification)
         return {"success": True, "action": action, "status": result_status}
     if retry_item is not None:
-        retry_single_item(retry_item)
+        retry_item.item_status = ItemStatus.WAITING
+        retry_item.error = ""
+        retry_item.retry_count = 0
+        download_queue.pop(retry_item.local_id, None)
+        pending.put_nowait(retry_item)
         return {"success": True, "action": action, "status": ItemStatus.WAITING}
     if result_status == ItemStatus.DELETED:
         return {"success": True, "action": action, "status": result_status}
@@ -868,27 +830,14 @@ async def retry_failed_items():
     retryable_statuses = {
         ItemStatus.CANCELLED,
         ItemStatus.FAILED,
-        ItemStatus.UNAVAILABLE,
     }
     with download_queue_lock:
-        found_items = [
-            item
-            for item in download_queue.values()
-            if (
-                item.get("item_status") in retryable_statuses
-                and (item.get("available", True) or item.get("_manual_cancelled"))
-                and not item.get("_discarded")
-            )
-        ]
+        found_items = [item for item in download_queue.values() if item.item_status in retryable_statuses]
         for item in found_items:
-            item["available"] = True
-            item.pop("_manual_cancelled", None)
-            item["item_status"] = ItemStatus.WAITING
-            item["error"] = ""
-            item["_stats_recorded"] = False
-            item["queue_preloaded"] = None
-            item["retry_count"] = int(item.get("retry_count", 0) or 0) + 1
-            download_queue.pop(item["local_id"], None)
+            item.item_status = ItemStatus.WAITING
+            item.error = ""
+            item.retry_count = item.retry_count + 1
+            download_queue.pop(item.local_id, None)
 
     for item in found_items:
         pending.put_nowait(item)
@@ -907,7 +856,7 @@ async def download_file(lid):
     with download_queue_lock:
         item = download_queue.get(str(lid))
         if item is not None:
-            file_path = item.get("file_path")
+            file_path = item.file_path
     if not file_path or not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Downloaded file not found")
     file_name = os.path.basename(file_path)
@@ -922,8 +871,7 @@ async def query_pending_queue():
 
     :return: Public snapshot of items waiting to enter the download queue.
     """
-    with pending_lock:
-        items = [_public_queue_item(item) for item in pending.get_items()]
+    items = [_public_queue_item(item) for item in pending.get_items()]
     return {"items": items, "count": len(items)}
 
 
@@ -934,8 +882,8 @@ async def query_parsing_queue():
 
     :return: Public snapshot of items currently being parsed.
     """
-    with parsing_lock:
-        items = [_public_queue_item(item) for item in parsing.values()]
+
+    items = [_public_queue_item(item) for item in parsing.get_items()]
     return {"items": items, "count": len(items)}
 
 
@@ -1118,7 +1066,7 @@ def _safe_queue_snapshot() -> list[dict]:
         for item in download_queue.values():
             safe = {
                 key: value
-                for key, value in item.items()
+                for key, value in item.model_dump()
                 if not key.startswith("_") and key not in {"token", "credentials", "login"}
             }
             snapshot.append(safe)
@@ -1299,43 +1247,44 @@ async def add_account(service: str, item: AccountData | None = None):
     :return: Boolean indicating success or failure of account addition.
     """
     found = False
-    match service:
-        case "generic":
-            generic_add_account()
-            found = True
-        case "spotify":
-            add_spotify_account()
-            # found = True
-        case "tidal":
-            add_tidal_account()
-            # found = True
-        case "applemusic":
-            apple_music_add_account(item.token)
-            found = True
-        case "youtube":
-            youtube_music_add_account()
-            found = True
-        case "bandcamp":
-            bandcamp_add_account()
-            found = True
-        case "qobuz":
-            qobuz_add_account(item.username, item.token)
-            found = True
-        case "deezer":
-            deezer_add_account(item.token)
-            found = True
-        case "soundcloud":
-            soundcloud_add_account(oauth_token=item.token)
-            found = True
-        case "crunchyroll":
-            crunchyroll_add_account(item.username, item.token)
-            # found = True
-        case _:
-            raise NotImplementedError
-    if found:
-        await run_in_threadpool(relogin)
-    notification_hook(title="Logging in...")
-    return found
+    if item is not None:
+        match service:
+            case "generic":
+                generic_add_account()
+                found = True
+            case "spotify":
+                add_spotify_account()
+                # found = True
+            case "tidal":
+                add_tidal_account()
+                # found = True
+            case "applemusic":
+                apple_music_add_account(item.token)
+                found = True
+            case "youtube":
+                youtube_music_add_account()
+                found = True
+            case "bandcamp":
+                bandcamp_add_account()
+                found = True
+            case "qobuz":
+                qobuz_add_account(item.username, item.token)
+                found = True
+            case "deezer":
+                deezer_add_account(item.token)
+                found = True
+            case "soundcloud":
+                soundcloud_add_account(oauth_token=item.token)
+                found = True
+            case "crunchyroll":
+                crunchyroll_add_account(item.username, item.token)
+                # found = True
+            case _:
+                raise NotImplementedError
+        if found:
+            await run_in_threadpool(relogin)
+        notification_hook(title="Logging in...")
+        return found
 
 
 @app.post("/accounts/spotify/companion/pair")
@@ -1476,7 +1425,7 @@ async def get_system_diagnostics():
     with download_queue_lock:
         status_counts: dict[str, int] = {}
         for item in download_queue.values():
-            status = str(item.get("item_status", "Unknown"))
+            status = str(item.item_status)
             status_counts[status] = status_counts.get(status, 0) + 1
     root = config.get("audio_download_path") or os.getcwd()
     try:
@@ -1497,7 +1446,7 @@ async def get_system_diagnostics():
         },
         "queue": {
             "pending": pending.qsize(),
-            "parsing": len(parsing),
+            "parsing": parsing.qsize(),
             "downloads": len(download_queue),
             "statuses": status_counts,
             "paused": download_paused.is_set(),
@@ -1532,12 +1481,11 @@ async def get_logs():
     data = []
     with open(log_path, "r") as f:
         lines = f.readlines()
-    for line in lines:
+    for line in lines[-100:]:
         main = re.findall(r"(\[*.+\])( -> *.+)", line)
         try:
             message = main[0][1]
-        except IndexError:
-            message = None
+        except Exception:
             data.append(
                 {
                     "id": uuid.uuid4(),
@@ -1553,13 +1501,12 @@ async def get_logs():
             date = log_info[0][0][:-4]
             source = log_info[0][2]
             level = log_info[0][3]
-            formatted_message = main if message is None else source + message
-
-        except IndexError:
+            formatted_message = source + message
+        except Exception:
             date = ""
             source = ""
             level = ""
-            formatted_message = main if message is None else message
+            formatted_message = message
         data.append(
             {
                 "id": uuid.uuid4(),
@@ -1579,7 +1526,7 @@ async def download_logs():
     :return: List of log entries.
     """
     log_path = config.get("_log_file")
-    directory, file_name = os.path.split(log_path)
+    _directory, file_name = os.path.split(log_path)
     return FileResponse(log_path, media_type="text/plain", filename=file_name)
 
 

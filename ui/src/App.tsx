@@ -1,61 +1,55 @@
-import React, {
+import {
   lazy,
   Suspense,
-  useEffect,
-  useState,
   useCallback,
+  useEffect,
   useRef,
+  useState,
 } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { Navbar, NavTab } from "./components/Navbar";
-import { SearchDashboard } from "./components/SearchDashboard";
-import type { SettingsSection } from "./components/SettingsPage";
 import { NotificationBanner } from "./components/NotificationBanner";
 import { NotificationHistory } from "./components/NotificationHistory";
+import { SearchDashboard } from "./components/SearchDashboard";
+import type { SettingsSection } from "./components/SettingsPage";
+import type { AccountHealth, DownloadProfile, QueueBatchAction } from "./lib/api";
 import {
-  OTSConfig,
-  DownloadQueueItem,
-  AccountItem,
-  LogEntry,
-  NotificationBannerItem,
-  SearchResultItem,
-  NotificationContent,
-} from "./types";
-import { useNotifications } from "./lib/notifications";
-import { installDocumentLocalization } from "./lib/localizeDocument";
-import {
-  fetchOTSConfig,
-  fetchDownloadQueue,
-  fetchAccounts,
+  addAccountService,
+  batchDownloadQueue,
+  check_api_version,
+  clearQueueItems,
+  configureYouTubeAuthentication,
+  deleteDownloadProfile,
   fetchAccountHealth,
-  reconnectAccounts,
+  fetchAccounts,
+  fetchDownloadProfiles,
+  fetchDownloadQueue,
+  fetchDownloadState,
+  fetchOTSConfig,
   fetchServerLogs,
+  fetchUpdateInfo,
+  performQueueAction,
+  reconnectAccounts,
+  removeAccountUUID,
+  reorderDownloadQueue,
+  resetOTSConfig,
+  saveDownloadProfile,
+  saveOTSConfig,
   searchCatalog,
   searchMedia,
-  clearQueueItems,
-  triggerRetryFailed,
-  performQueueAction,
-  updateOTSConfigValue,
-  saveOTSConfig,
-  resetOTSConfig,
-  addAccountService,
-  configureYouTubeAuthentication,
-  uploadYouTubeCookies,
-  removeAccountUUID,
-  check_api_version,
-  fetchUpdateInfo,
-  batchDownloadQueue,
-  verifyDownloadQueue,
-  fetchDownloadState,
-  setDownloadsPaused,
-  reorderDownloadQueue,
-  fetchDownloadProfiles,
   setActiveDownloadProfile,
-  saveDownloadProfile,
-  deleteDownloadProfile,
+  triggerRetryFailed,
+  updateOTSConfigValue,
+  uploadYouTubeCookies
 } from "./lib/api";
-import type { DownloadProfile, QueueBatchAction } from "./lib/api";
-import type { AccountHealth } from "./lib/api";
+import { installDocumentLocalization } from "./lib/localizeDocument";
+import { useNotifications } from "./lib/notifications";
+import {
+  AccountItem,
+  DownloadQueueItem,
+  LogEntry,
+  OTSConfig
+} from "./types";
 
 const DownloadQueue = lazy(() =>
   import("./components/DownloadQueue").then((module) => ({
@@ -464,7 +458,7 @@ export default function App() {
 
   return (
     <div
-      className={`${isDarkMode === "dark" ? "dark-theme" : "light-theme"} min-h-screen antialiased`}>
+      className={`${isDarkMode === "dark" ? "dark" : ""} min-h-screen antialiased`}>
       <Navbar
         activeTab={activeTab}
         onTabChange={setActiveTab}
@@ -485,7 +479,7 @@ export default function App() {
         language={config?.language || "en_US"}
       />
 
-      <main className="min-h-screen pb-10 md:ml-64">
+      <main className="min-h-screen pb-10 md:ml-64 bg-[#121212]">
         <Suspense fallback={<PageLoading />}>
           {activeTab === "dashboard" && (
             <SearchDashboard

@@ -2,6 +2,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from .constants import ItemStatus
+
 
 # Pydantic schemas of body data
 class AccountData(BaseModel):
@@ -109,7 +111,7 @@ class Account(BaseModel):
 
 
 class AppSettings(BaseModel):
-    version: str = "v2.0.0 Alpha 2"
+    version: str = "v2.0.1 beta 2"
     debug_mode: bool = False
     language_index: int = 0
     total_downloaded_items: int = 0
@@ -270,3 +272,39 @@ class AppSettings(BaseModel):
     _ffmpeg_bin_path: str = ""
     _cache_dir: str = ""
     _log_file: str = ""
+
+
+class DownloadProfile(BaseModel):
+    id: str
+    name: str
+    format: str
+    bitrate: int
+    download_path: str = ""
+
+
+class QueueItem(BaseModel):
+    name: str = ""
+    artist: str = ""
+    thumbnail: str = ""
+    album: str = ""
+    length: int = 0
+    file_size: str = ""
+    bitrate: int = 0
+    local_id: int
+    item_service: str
+    item_type: str
+    item_id: str
+    item_url: str
+    playlist_name: str = ""
+    playlist_by: str = ""
+    playlist_number: str = ""
+    parent_category: str
+    item_status: ItemStatus
+    progress: int = 0
+    download_profile: DownloadProfile
+    target_format: str = ""
+    download_format: str = ""
+    temp_path: str = ""
+    file_path: str = ""
+    error: str = ""
+    retry_count: int = 0
