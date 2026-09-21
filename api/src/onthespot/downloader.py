@@ -216,6 +216,16 @@ class DownloadWorker:
                     logger.error(error_msg, exc_info=exc)
                     item.error = error_msg
                     item.item_status = ItemStatus.FAILED
+                    progress_hook(item, 0, item.item_status)
+                    requeue_item(item)
+                    continue
+
+                # ---- Playability check ----------------------------------------
+                if not item_metadata.get("is_playable", True):
+                    logger.error("Track is unavailable", extra={"track_id": item_id})
+                    item.error = "The service marked this item as unavailable."
+                    item.item_status = ItemStatus.UNAVAILABLE
+                    progress_hook(item, 0, item.item_status)
                     requeue_item(item)
                     continue
 
@@ -231,7 +241,7 @@ class DownloadWorker:
                 except Exception:
                     logger.exception("error emitting progress metadata")
 
-                # --- Format item path from templates  --------------------------
+                # --- build item path from template  --------------------------
                 file_template_path = format_item_path(item, item_metadata)
 
                 # ---- Resolve download paths and check if file already exists ----------
@@ -248,15 +258,6 @@ class DownloadWorker:
                         final_file_path,
                     ):
                         continue
-
-                # ---- Playability check ----------------------------------------
-                if not item_metadata.get("is_playable", True):
-                    logger.error("Track is unavailable", extra={"track_id": item_id})
-                    item.error = "The service marked this item as unavailable."
-                    item.item_status = ItemStatus.UNAVAILABLE
-                    progress_hook(item, 0, item.item_status)
-                    requeue_item(item)
-                    continue
 
                 self._raise_if_cancelled(item)
 
@@ -275,12 +276,14 @@ class DownloadWorker:
                     logger.error("Track is unavailable", extra={"track_id": item_id})
                     item.error = "The service marked this item as unavailable."
                     item.item_status = ItemStatus.UNAVAILABLE
+                    progress_hook(item, 0, item.item_status)
                     requeue_item(item)
                     continue
-                except RuntimeError as exc:
+                except Exception as exc:
                     logger.error("Download failed", extra={"item": item, "error": str(exc)})
                     item.error = f"RuntimeError during download of: {item_id}, see logs."
                     item.item_status = ItemStatus.FAILED
+                    progress_hook(item, 0, item.item_status)
                     requeue_item(item)
                     continue
 
@@ -292,7 +295,6 @@ class DownloadWorker:
                     temp_file_path = new_path_with_ext
 
                 # ---- Post-processing (convert, tag, thumbnail, lyrics, ecc) ------------------------------------------
-
                 if service != "generic":
                     progress_hook(item, 50)
                     item.progress = 50
@@ -319,14 +321,6 @@ class DownloadWorker:
                         )
 
                 self._raise_if_cancelled(item)
-
-                # ---- File Verification -------------------------------------------
-                if service != "generic" and item_type in ("track", "podcast_episode"):
-                    verification = verify_file(item.file_path)
-                    if not verification.get("valid"):
-                        raise RuntimeError(
-                            f"Final file verification failed: {verification.get('reason', 'invalid audio')}"
-                        )
 
                 # ---- Mark downloaded ------------------------------------------
                 item.item_status = ItemStatus.DOWNLOADED
@@ -355,6 +349,7 @@ class DownloadWorker:
                     if item.item_status != ItemStatus.CANCELLED:
                         item.item_status = ItemStatus.CANCELLED
                     logger.info("Download cancelled: %s", item_metadata.get("title", item.local_id))
+                    progress_hook(item, 0, item.item_status)
                 continue
             except Exception as exc:
                 logger.error(
@@ -364,6 +359,7 @@ class DownloadWorker:
                 if item is not None:
                     if item.item_status != ItemStatus.CANCELLED:
                         requeue_item(item)
+                    progress_hook(item, 0, item.item_status)
                     delay = jittered_delay()
                     time.sleep(delay)
                     # remove possible trash files

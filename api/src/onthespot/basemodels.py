@@ -28,7 +28,7 @@ class QueueOrder(BaseModel):
 
 
 class QueueBatch(BaseModel):
-    local_ids: list[str]
+    local_ids: list[int]
     action: str
     priority: int | None = None
     profile_id: str | None = None

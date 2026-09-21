@@ -34,7 +34,7 @@ BASE_URL = "https://api.spotify.com/v1"
 
 # Cache for the Client-Credentials OAuth token (keyed by client id + expiry so
 # changing the credentials in Settings takes effect immediately).
-_oauth_token_cache = {"access_token": None, "expires_at": 0, "client_id": None}
+_oauth_token_cache = {"access_token": "", "expires_at": 0, "client_id": ""}
 _oauth_token_lock = threading.Lock()
 
 _session_reinit_lock = threading.Lock()
@@ -325,8 +325,8 @@ def spotify_get_oauth_token():
     gives Web API calls their own quota. Catalog endpoints only - this token has
     no user context, so it can't read /me/* (liked songs, your episodes)."""
     # str() guards against the CLI / web settings coercing an all-digit value to int.
-    client_id = str(config.get("spotify_webapi_override_client_id", "") or "").strip()
-    client_secret = str(config.get("spotify_webapi_override_client_secret", "") or "").strip()
+    client_id = str(config.get("spotify_webapi_override_client_id", "")).strip()
+    client_secret = str(config.get("spotify_webapi_override_client_secret", "")).strip()
     if not client_id or not client_secret:
         return None
 
@@ -334,7 +334,7 @@ def spotify_get_oauth_token():
         if (
             _oauth_token_cache["access_token"]
             and _oauth_token_cache["client_id"] == client_id
-            and time.time() < _oauth_token_cache["expires_at"]
+            and time.time() < int(_oauth_token_cache["expires_at"])
         ):
             return _oauth_token_cache["access_token"]
 
@@ -349,8 +349,8 @@ def spotify_get_oauth_token():
                 data={"grant_type": "client_credentials"},
                 timeout=15,
             )
-        except requests.exceptions.RequestException as e:
-            logger.error("[OAUTH] Token request failed: %s", str(e))
+        except requests.exceptions.RequestException:
+            logger.exception("[OAUTH] Token request failed: %s")
             return None
         if resp.status_code != 200:
             logger.error("Failed to get access token: %d - %s", resp.status_code, resp.text)
@@ -363,10 +363,10 @@ def spotify_get_oauth_token():
             logger.error("[OAUTH] Malformed token response: %s", str(e))
             return None
         _oauth_token_cache["access_token"] = access_token
-        _oauth_token_cache["client_id"] = client_id
+        _oauth_token_cache["client_id"] = int(client_id)
         # Refresh a little early (5 min buffer) to avoid mid-call expiry.
         _oauth_token_cache["expires_at"] = time.time() + expires_in - 300
-        logger.info("[AUTH] Using Web API override credentials (OAuth) for Spotify metadata/search")
+        logger.info("[AUTH] Using Web API credentials (OAuth) for Spotify metadata/search")
         return _oauth_token_cache["access_token"]
 
 

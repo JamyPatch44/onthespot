@@ -380,9 +380,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# Enabled Self-serving static frontend files from FastAPI. This could work for single binary deployment
-# but we need to implement better path handling and a separate composer file
-# app.frontend("/", directory="dist")
 
 
 ##PROFILES ENDPOINTS
@@ -579,25 +576,6 @@ async def query_download_state():
         }
 
 
-@app.post("/queue/downloads/reorder")
-async def reorder_download_queue(order: QueueOrder):
-    raise NotImplementedError
-    requested = [str(local_id) for local_id in order.local_ids]
-    with download_queue_lock:
-        for position, local_id in enumerate(requested):
-            if local_id in download_queue:
-                download_queue[local_id]["queue_position"] = position
-                download_queue[local_id]["priority"] = len(requested) - position
-
-    pending_items = pending.get_items()
-    pending_by_id = {str(item.get("local_id")): item for item in pending_items}
-    ordered_pending = [pending_by_id[local_id] for local_id in requested if local_id in pending_by_id]
-    ordered_ids = {str(item.get("local_id")) for item in ordered_pending}
-    ordered_pending.extend(item for item in pending_items if str(item.get("local_id")) not in ordered_ids)
-    pending.replace_items(ordered_pending)
-    return {"success": True, "order": requested}
-
-
 @app.post("/queue/downloads/batch")
 async def batch_download_queue_action(batch: QueueBatch):
     """Apply one control to several queue items at once."""
@@ -616,39 +594,44 @@ async def batch_download_queue_action(batch: QueueBatch):
     retry_items: list[QueueItem] = []
     changed = 0
     with download_queue_lock:
-        for local_id in {str(value) for value in batch.local_ids}:
-            item = download_queue.get(local_id)
-            if item is None:
-                continue
-            selected.append(item)
-            if action == "cancel":
-                item.item_status = ItemStatus.CANCELLED
-                item.error = "Cancelled by the user."
-            elif action == "delete":
-                if item.item_status == ItemStatus.DOWNLOADING:
-                    item.item_status = ItemStatus.CANCELLED
-                    item.error = "Deleted by the user."
-                else:
-                    download_queue.pop(local_id, None)
-            elif action == "retry":
-                retry_items.append(item)
-            elif action == "profile":
-                profile = next(
-                    entry
-                    for entry in (config.get("download_profiles", []) or [])
-                    if entry.get("id") == batch.profile_id
-                )
-                item.download_profile.id = profile.get("id")
-                item.download_profile.name = profile.get("name", profile.get("id", "Default"))
-            changed += 1
+        temp_queue = download_queue.copy()
+        try:
+            for item in temp_queue.values():
+                if item.local_id in batch.local_ids:
+                    local_id = item.local_id
+                    if item is None:
+                        continue
+                    selected.append(item)
+                    if action == "cancel":
+                        item.item_status = ItemStatus.CANCELLED
+                        item.error = "Cancelled by the user."
+                    elif action == "delete":
+                        if item.item_status == ItemStatus.DOWNLOADING:
+                            item.item_status = ItemStatus.CANCELLED
+                            item.error = "Deleted by the user."
+                        else:
+                            download_queue.pop(local_id, None)
+                    elif action == "retry":
+                        retry_items.append(item)
+                    elif action == "profile":
+                        profile = next(
+                            entry
+                            for entry in (config.get("download_profiles", []) or [])
+                            if entry.get("id") == batch.profile_id
+                        )
+                        item.download_profile.id = profile.get("id")
+                        item.download_profile.name = profile.get("name", profile.get("id", "Default"))
+                    changed += 1
 
-    for item in retry_items:
-        retry_item = item
-        retry_item.item_status = ItemStatus.WAITING
-        retry_item.error = ""
-        retry_item.retry_count = 0
-        download_queue.pop(retry_item.local_id, None)
-        pending.put_nowait(retry_item)
+            for item in retry_items:
+                retry_item = item
+                retry_item.item_status = ItemStatus.WAITING
+                retry_item.error = ""
+                retry_item.retry_count = 0
+                download_queue.pop(retry_item.local_id, None)
+                pending.put_nowait(retry_item)
+        except Exception:
+            logger.exception("Exception durint batch action:")
     for item in selected:
         if action in {"pause", "resume", "cancel"}:
             progress_hook(item, item.progress, item.item_status)
@@ -699,26 +682,6 @@ async def verify_download_queue(request: QueueVerify):
     }
 
 
-@app.post("/queue/pending/action")
-async def pending_action(lid: str, action: str):
-    """
-    Endpoint to perform actions on a specific item in the pending queue.
-
-    :param lid: Local ID of the item.
-    :param action: Action to perform (e.g., retry, cancel, delete).
-    :return: Boolean indicating success or failure of the action.
-    """
-
-    for item in pending.get_items():
-        if item["local_id"] == lid:
-            match action:
-                case "cancel":
-                    pending.remove(item)
-                    return True
-                case _:
-                    return False
-
-
 @app.get("/queue/downloads/clear")
 async def remove_queue_items(status: str = "Completed"):
     """
@@ -750,6 +713,26 @@ async def remove_queue_items(status: str = "Completed"):
         for key in keys_to_remove:
             download_queue.pop(key, None)
         return len(keys_to_remove)
+
+
+@app.post("/queue/pending/action")
+async def pending_action(lid: str, action: str):
+    """
+    Endpoint to perform actions on a specific item in the pending queue.
+
+    :param lid: Local ID of the item.
+    :param action: Action to perform (e.g., retry, cancel, delete).
+    :return: Boolean indicating success or failure of the action.
+    """
+
+    for item in pending.get_items():
+        if isinstance(item, QueueItem) and item.local_id == int(lid):
+            match action:
+                case "cancel":
+                    pending.remove(item)
+                    return True
+                case _:
+                    return False
 
 
 @app.post("/queue/downloads/action")
@@ -871,7 +854,7 @@ async def query_pending_queue():
 
     :return: Public snapshot of items waiting to enter the download queue.
     """
-    items = [_public_queue_item(item) for item in pending.get_items()]
+    items = [item for item in pending.get_items()]
     return {"items": items, "count": len(items)}
 
 
@@ -953,50 +936,6 @@ async def update_export_location(payload: dict[str, Any]):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/exports/playlist-backup-location")
-async def get_playlist_backup_location():
-    return {"directory": playlist_backup_directory()}
-
-
-@app.post("/exports/playlist-backup-location")
-async def update_playlist_backup_location(payload: dict[str, Any]):
-    try:
-        return {"directory": set_playlist_backup_directory(str(payload.get("directory") or ""))}
-    except OSError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.post("/exports/write")
-async def write_text_export(payload: dict[str, Any]):
-    raise NotImplementedError
-
-    filename = (
-        re.sub(r"[^A-Za-z0-9._-]+", "-", str(payload.get("filename") or "export.txt")).strip(".-") or "export.txt"
-    )
-    stem, extension = os.path.splitext(filename)
-    try:
-        path = write_export_file(
-            stem or "export",
-            extension or ".txt",
-            str(payload.get("content") or ""),
-            str(payload.get("directory") or ""),
-        )
-        return {"success": True, "path": path}
-    except OSError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.post("/exports/open-folder")
-async def open_export_folder(payload: dict[str, Any]):
-    try:
-        directory = playlist_backup_directory() if payload.get("playlist_backups") else default_export_directory()
-        os.makedirs(directory, exist_ok=True)
-        open_item(directory)
-        return {"success": True, "path": directory}
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
 @app.post("/config/reset")
 async def reset_config():
     """
@@ -1008,16 +947,9 @@ async def reset_config():
     return config.as_dict()
 
 
-def _exportable_config() -> dict:
-    exported = config.as_dict()
-    if exported.get("spotify_webapi_override_client_secret_configured"):
-        exported["spotify_webapi_override_client_secret"] = "<redacted>"
-    return exported
-
-
 @app.get("/config/export")
 async def export_config():
-    return JSONResponse(content=_exportable_config())
+    return JSONResponse(content=config)
 
 
 @app.post("/config/export-file")
@@ -1064,24 +996,9 @@ def _safe_queue_snapshot() -> list[dict]:
     with download_queue_lock:
         snapshot = []
         for item in download_queue.values():
-            safe = {
-                key: value
-                for key, value in item.model_dump()
-                if not key.startswith("_") and key not in {"token", "credentials", "login"}
-            }
+            safe = {key: value for key, value in item.model_dump()}
             snapshot.append(safe)
         return snapshot
-
-
-@app.get("/statistics")
-async def download_statistics():
-    raise NotImplementedError
-
-
-@app.post("/statistics/clear")
-async def clear_download_statistics():
-    clear_history()
-    return {"success": True}
 
 
 @app.get("/backup/export")
@@ -1090,11 +1007,10 @@ async def export_backup():
         content={
             "version": 1,
             "created_at": int(time.time()),
-            "settings": _exportable_config(),
+            "settings": config,
             "download_profiles": config.get("download_profiles", []) or [],
             "queue": _safe_queue_snapshot(),
             "queue_history": export_history(),
-            "library_metadata": export_index(),
         }
     )
 

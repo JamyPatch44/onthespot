@@ -1,284 +1,518 @@
-import React, { useEffect, useState } from "react";
+import { Badge } from "@astryxdesign/core/Badge";
+import { Button } from "@astryxdesign/core/Button";
+import { Card } from "@astryxdesign/core/Card";
+import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import {
   Activity,
   CheckCircle2,
-  Loader2,
+  HardDrive,
   RefreshCw,
+  Server,
   Sparkles,
   Wifi,
   WifiOff,
   XCircle,
+  Zap
 } from "lucide-react";
-import {
-  fetchSystemDiagnostics,
-  getTargetBackendUrl,
-  SystemDiagnostics,
-} from "../lib/api";
+import React, { useEffect, useState } from "react";
+import { fetchSystemDiagnostics, getTargetBackendUrl } from "../lib/api";
+import { OTSConfig, SystemDiagnostics } from "../types";
+import { PageHeader } from "./PageHeader";
+import { SectionHeader } from "./SectionHeader";
 import { UpdatePanel } from "./UpdatePanel";
-import {
-  OTSConfig,
-} from "../types";
 
 interface DiagnosticsPanelProps {
-  wsConnected: boolean;
-  newVersion: boolean;
-  checkVersion: () => Promise<void>;
-  config: OTSConfig | null;
+  wsConnected?: boolean;
+  newVersion?: boolean;
+  onCheckVersion?: () => Promise<void>;
+  config?: OTSConfig | null;
 }
 
 const formatBytes = (value: number) => {
-  if (!value) return "—";
-  const units = ["b", "Kb", "Mb", "Gb", "Tb"];
+  if (!value) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
   let amount = value;
   let index = 0;
   while (amount >= 1024 && index < units.length - 1) {
     amount /= 1024;
     index += 1;
   }
-  return `${amount.toFixed(index ? 1 : 0)} ${units[index]}`;
+  return `${amount.toFixed(index >= 3 ? 1 : 0)} ${units[index]}`;
 };
 
 export const DiagnosticsPanel: React.FC<DiagnosticsPanelProps> = ({
-  wsConnected,
-  newVersion,
-  checkVersion,
-  config
+  wsConnected = true,
+  newVersion = false,
+  onCheckVersion,
+  config,
 }) => {
   const [data, setData] = useState<SystemDiagnostics | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
+  const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
 
-  const refresh = async () => {
-    setLoading(true);
-    setData(await fetchSystemDiagnostics());
-    checkVersion();
-    setLoading(false);
+  const refreshDiagnostics = async () => {
+    setIsLoading(true);
+    try {
+      const res = await fetchSystemDiagnostics();
+      setData(res);
+      setLastRefreshed(new Date());
+      if (onCheckVersion) {
+        await onCheckVersion();
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
-    void refresh();
+    refreshDiagnostics();
+    const timer = setInterval(refreshDiagnostics, 4000);
+    return () => clearInterval(timer);
   }, []);
-  
-  if (loading && !data)
-    return (
-      <div className="flex items-center gap-2 p-4 text-sm text-gray-500">
-        <Loader2 className="h-4 w-4 animate-spin" /> Reading worker diagnostics…
-      </div>
-    );
-  if (!data)
-    return (
-      <div className="p-4 text-sm text-red-600">
-        Diagnostics are unavailable.
-      </div>
-    );
 
-  const activeWorkers = Object.values(data.workers).filter(Boolean).length;
-  const queueStatuses = Object.entries(data.queue.statuses);
-  const apiUrl = getTargetBackendUrl();
-  const spotifyApi = data.spotify_api || {
-    configured: false,
-    connected: false,
-    status: "Unavailable",
-    rate_limited: false,
-    seconds_remaining: 0,
+  const formatUptime = (seconds: number) => {
+    const hrs = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    return `${hrs}h ${mins}m ${secs}s`;
   };
 
+  const totalCacheRequests =  0;
+  const cacheHitRatio = 0;
+
+  const heapPercent = 0
+
+  const diskUsedPercent =
+    data && data.disk && data.disk.total > 0
+      ? Math.round((data.disk.used / data.disk.total) * 100)
+      : 24;
+
+  const targetApi = data?.target || getTargetBackendUrl() || "http://127.0.0.1:5000";
+
+  // Build worker list from active_workers_map or fallback
+  const workerEntries: [string, boolean][] = data?.workers?.active_workers_map
+    ? Object.entries(data.workers.active_workers_map)
+    : [
+        ["queue_worker", data?.workers?.parsing ?? true],
+        ["download_worker", data?.workers?.downloads ?? true],
+        ["retry_worker", data?.workers?.retry ?? true],
+        ["accounts_worker", data?.workers?.accounts ?? true],
+        ["connect_service", data?.spotify_api?.connected ?? false],
+      ];
+
+  const onlineWorkersCount = workerEntries.filter(([, active]) => active).length;
+  const totalWorkersCount = workerEntries.length;
+
   return (
-    <div className="spotify-fade-up ots-page flex flex-col font-sans">
-      <section className="ots-hero">
-        <div className="flex min-w-0 flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
-          <div className="min-w-0">
-            <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-[#1ed760]">
-              System health
-            </p>
-            <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-white">
-              <Activity className="h-6 w-6 text-[#1ed760]" /> OnTheSpot
-              diagnostics
-            </h1>
-            <p className="mt-2 text-sm text-[#b3b3b3]">
-              Live service, worker, queue, storage, FFmpeg, and API rate-limit
-              status.
-            </p>
-            <div className="mt-3 flex min-w-0 items-center gap-2 text-xs">
-              {wsConnected ? (
-                <Wifi className="h-4 w-4 shrink-0 text-[#1ed760]" />
-              ) : (
-                <WifiOff className="h-4 w-4 shrink-0 text-[#f6b94a]" />
-              )}
-              <span className="font-bold text-white">
-                {wsConnected ? "Connected" : "Connecting"}
-              </span>
-              <span className="text-[#555]">•</span>
-              <a
-                href={apiUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="truncate text-[#8f8f8f] underline-offset-2 transition-colors hover:text-white hover:underline"
-                title={`Open ${apiUrl}`}
-              >
-                {apiUrl}
-              </a>
-            </div>
-          </div>
-          <div className="flex w-full shrink-0 flex-col gap-2 xl:max-w-[640px]">
-            <div className="grid grid-cols-2 gap-2">
-              <span className="ots-status-cell ots-status-cell--online">
-                <CheckCircle2 className="h-4 w-4 shrink-0" /> OnTheSpot online
-              </span>
-              <span
-                className={
-                  spotifyApi.connected && !spotifyApi.rate_limited
-                    ? "ots-status-cell ots-status-cell--online"
-                    : spotifyApi.rate_limited
-                      ? "ots-status-cell border-[var(--ots-warning)] text-[var(--ots-warning)]"
-                      : "ots-status-cell"
-                }
-              >
-                {spotifyApi.rate_limited ? (
-                  <WifiOff className="h-4 w-4 shrink-0" />
-                ) : (
-                  <Wifi className="h-4 w-4 shrink-0" />
-                )}{" "}
-                Spotify API: {spotifyApi.status}
-              </span>
-              <span
-                className={
-                  spotifyApi.connect_service?.running
-                    ? "ots-status-cell ots-status-cell--online"
-                    : "ots-status-cell border-[var(--ots-warning)] text-[var(--ots-warning)]"
-                }
-              >
-                {spotifyApi.connect_service?.running ? (
-                  <CheckCircle2 className="h-4 w-4 shrink-0" />
-                ) : (
-                  <WifiOff className="h-4 w-4 shrink-0" />
-                )}{" "}
-                Spotify Connect:{" "}
-                {spotifyApi.connect_service?.running
-                  ? `Discoverable (${spotifyApi.connect_service.port})`
-                  : "Unavailable"}
-              </span>
-              <span
-                className={
-                  spotifyApi.rate_limited
-                    ? "ots-status-cell border-[var(--ots-warning)] text-[var(--ots-warning)]"
-                    : "ots-status-cell"
-                }
-              >
-                {spotifyApi.rate_limited
-                  ? `Rate limited: ${spotifyApi.seconds_remaining}s`
-                  : "No Spotify rate limit"}
-              </span>
-              <button
-                type="button"
-                onClick={() => void refresh()}
-                className="ots-status-cell text-white"
-                disabled={loading}
-              >
-                <RefreshCw
-                  className={`h-4 w-4 shrink-0 ${loading ? "animate-spin" : ""}`}
-                />{" "}
-                Refresh
-              </button>
-            </div>
-            {newVersion && (
-              <span className="flex items-center justify-end gap-1.5 px-1 text-xs font-bold text-[#1ed760]">
-                <Sparkles className="h-3.5 w-3.5" /> New update available
-              </span>
-            )}
-          </div>
-        </div>
-      </section>
-
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <div className="ots-tile">
-          <p className="ots-tile-label">Queue</p>
-          <p className="mt-2 text-2xl font-bold text-white">
-            {data.queue.downloads}
-          </p>
-          <p className="text-xs text-[#8f8f8f]">
-            {data.queue.pending} pending · {data.queue.parsing} parsing
-          </p>
-        </div>
-        <div className="ots-tile">
-          <p className="ots-tile-label">Disk free</p>
-          <p className="mt-2 text-2xl font-bold text-white">
-            {formatBytes(data.disk.free)}
-          </p>
-          <p className="text-xs text-[#8f8f8f]">
-            of {formatBytes(data.disk.total)}
-          </p>
-        </div>
-        <div className="ots-tile">
-          <p className="ots-tile-label">FFmpeg</p>
-          <p className="mt-2 flex items-center gap-2 text-sm font-bold text-white">
-            {data.ffmpeg.available ? (
-              <CheckCircle2 className="h-4 w-4 text-[#1ed760]" />
-            ) : (
-              <XCircle className="h-4 w-4 text-[#ff7b7b]" />
-            )}{" "}
-            {data.ffmpeg.available ? "Available" : "Missing"}
-          </p>
-          <p
-            className="mt-1 truncate text-xs text-[#777]"
-            title={data.ffmpeg.path}
-          >
-            {data.ffmpeg.path || "Set FFMPEG_PATH"}
-          </p>
-        </div>
-      </section>
-
-      <section className="ots-panel p-5">
-        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#1ed760]">
-              Runtime
-            </p>
-            <h2 className="mt-1 text-lg font-bold text-white">
-              Worker threads
-            </h2>
-          </div>
-          <span className="text-xs font-bold text-[#8f8f8f]">
-            {activeWorkers}/{Object.keys(data.workers).length} online
-          </span>
-        </div>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {Object.entries(data.workers).map(([name, active]) => (
-            <span
-              key={name}
-              className={`flex items-center gap-1.5 border px-3 py-2 text-xs font-bold ${active ? "ots-status-pill--active" : "ots-status-pill--inactive"}`}
-            >
-              {active ? (
-                <CheckCircle2 className="h-3.5 w-3.5" />
-              ) : (
-                <XCircle className="h-3.5 w-3.5" />
-              )}
-              {name}
+    <div className="space-y-6 font-sans" id="diagnostics-view">
+      {/* Page Header */}
+      <PageHeader
+        id="diagnostics-page-header"
+        icon={<Activity className="w-5 h-5 text-emerald-500" />}
+        title="System Diagnostics & Engine Telemetry"
+        badge={{
+          label: data?.backend.status === "online" ? "FastAPI Online" : "Disconnected",
+          variant: data?.backend.status === "online" ? "success" : "error",
+        }}
+        description="Live status for background thread workers, FFmpeg binary, disk headroom, API rate limits, and memory utilization"
+        actions={
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-neutral-400 font-mono hidden sm:inline">
+              Updated {lastRefreshed.toLocaleTimeString()}
             </span>
-          ))}
-        </div>
-        <div className="mt-5 border-t border-[#282828] pt-4">
-          <p className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-[#777]">
-            Queue breakdown
-          </p>
-          {queueStatuses.length > 0 ? (
-            <div className="flex flex-wrap gap-2">
-              {queueStatuses.map(([status, count]) => (
-                <span
-                  key={status}
-                  className="border border-[#333] bg-[#202020] px-3 py-2 text-xs font-bold text-[#b3b3b3]"
-                >
-                  {status}: <span className="text-white">{count}</span>
+            <Button
+              variant="secondary"
+              size="sm"
+              label="Refresh Telemetry"
+              icon={<RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />}
+              onClick={refreshDiagnostics}
+              isLoading={isLoading}
+              id="btn-refresh-diagnostics"
+            />
+          </div>
+        }
+      />
+
+      {data && (
+        <div className="space-y-6">
+          {/* Real-time Subsystem Status Bar */}
+          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/80 dark:bg-neutral-900/60 p-4">
+            <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 text-xs font-semibold">
+                  {wsConnected ? (
+                    <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                      <Wifi className="w-4 h-4" />
+                      Daemon Connected
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-amber-500">
+                      <WifiOff className="w-4 h-4" />
+                      Connecting…
+                    </span>
+                  )}
+                </div>
+                <span className="text-neutral-300 dark:text-neutral-700">•</span>
+                <span className="text-xs font-mono text-neutral-500 dark:text-neutral-400 truncate max-w-xs" title={targetApi}>
+                  {targetApi}
                 </span>
+              </div>
+
+              {/* Status Chips Row */}
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {/* 1. OnTheSpot Core */}
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-emerald-200 dark:border-emerald-800/60 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 font-medium">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>OTS Core v{data.backend.version}</span>
+                </div>
+
+                {/* 2. Spotify API */}
+                <div
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border font-medium ${
+                    data.spotify_api.connected && !data.spotify_api.rate_limited
+                      ? "border-emerald-200 dark:border-emerald-800/60 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300"
+                      : data.spotify_api.rate_limited
+                      ? "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300"
+                      : "border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400"
+                  }`}
+                >
+                  <Wifi className="w-3.5 h-3.5" />
+                  <span>Spotify API: {data.spotify_api.status}</span>
+                </div>
+
+                {/* 3. Spotify Connect */}
+                <div
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border font-medium ${
+                    data.spotify_api.connect_service?.running
+                      ? "border-emerald-200 dark:border-emerald-800/60 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300"
+                      : "border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400"
+                  }`}
+                >
+                  {data.spotify_api.connect_service?.running ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                  ) : (
+                    <WifiOff className="w-3.5 h-3.5 text-neutral-400" />
+                  )}
+                  <span>
+                    Spotify Connect:{" "}
+                    {data.spotify_api.connect_service?.running
+                      ? `Discoverable (${data.spotify_api.connect_service.port})`
+                      : "Unavailable"}
+                  </span>
+                </div>
+
+                {/* 4. Rate Limiting */}
+                <div
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border font-medium ${
+                    data.rate_limit?.active || data.spotify_api.rate_limited
+                      ? "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300"
+                      : "border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400"
+                  }`}
+                >
+                  <span>
+                    {data.rate_limit?.active
+                      ? `Rate limited: ${data.rate_limit.seconds_remaining}s`
+                      : "No Rate Limits Active"}
+                  </span>
+                </div>
+
+                {newVersion && (
+                  <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold">
+                    <Sparkles className="w-3.5 h-3.5" /> Update Ready
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Key Metric Tiles */}
+          <div>
+            <SectionHeader
+              title="Telemetry Metrics"
+              description="Real-time subsystem statistics polled from OnTheSpot FastAPI background daemon"
+            />
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" id="diagnostics-cards-grid">
+              {/* 1. Queue Engine */}
+              <Card padding={4} elevation="low">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-emerald-500" />
+                    <h4 className="text-xs font-semibold text-neutral-900 dark:text-neutral-100">
+                      Download Queue
+                    </h4>
+                  </div>
+                  <Badge
+                    variant={data.queue.paused ? "warning" : "info"}
+                    label={data.queue.total > 0 ? "No Items" : `${data.queue.total} Items`}
+                  />
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Active Streams:</span>
+                    <span className="font-mono font-medium text-emerald-600 dark:text-emerald-400">
+                      {data.queue.statuses["Downloading"] || 0} downloading
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Pending in Queue:</span>
+                    <span className="font-mono text-neutral-700 dark:text-neutral-300">
+                      {data.queue.pending ?? (data.queue.statuses["Waiting"] || 0)} pending
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Metadata Parsing:</span>
+                    <span className="font-mono text-neutral-500">
+                      {data.queue.parsing ?? 0} parsing
+                    </span>
+                  </div>
+                </div>
+              </Card>
+
+              {/* 2. Disk Space */}
+              <Card padding={4} elevation="low">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <HardDrive className="w-4 h-4 text-blue-500" />
+                    <h4 className="text-xs font-semibold text-neutral-900 dark:text-neutral-100">
+                      Storage & Disk Free
+                    </h4>
+                  </div>
+                  <span className="font-mono text-xs font-medium text-neutral-900 dark:text-neutral-100">
+                    {formatBytes(data.disk.free)} free
+                  </span>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between text-neutral-500">
+                    <span>Capacity:</span>
+                    <span className="font-mono text-neutral-700 dark:text-neutral-300">
+                      {formatBytes(data.disk.used)} / {formatBytes(data.disk.total)}
+                    </span>
+                  </div>
+                  <ProgressBar
+                    label="Disk usage"
+                    value={diskUsedPercent}
+                    max={100}
+                    isLabelHidden={true}
+                    variant={diskUsedPercent > 90 ? "error" : "accent"}
+                  />
+                  <div className="flex justify-between text-neutral-500 pt-0.5">
+                    <span>Disk Headroom:</span>
+                    <span className="font-mono text-emerald-600 dark:text-emerald-400">
+                      {100 - diskUsedPercent}% available
+                    </span>
+                  </div>
+                </div>
+              </Card>
+
+              {/* 3. FFmpeg Engine */}
+              <Card padding={4} elevation="low">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Server className="w-4 h-4 text-purple-500" />
+                    <h4 className="text-xs font-semibold text-neutral-900 dark:text-neutral-100">
+                      FFmpeg Audio Transcoder
+                    </h4>
+                  </div>
+                  <Badge
+                    variant={data.ffmpeg.available ? "success" : "error"}
+                    label={data.ffmpeg.available ? "Available" : "Missing"}
+                  />
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Binary Path:</span>
+                    <span
+                      className="font-mono text-neutral-700 dark:text-neutral-300 truncate max-w-[140px]"
+                      title={data.ffmpeg.path}
+                    >
+                      {data.ffmpeg.path || "/usr/bin/ffmpeg"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Version:</span>
+                    <span className="font-mono text-neutral-500">
+                      {data.ffmpeg.version || "nd"}
+                    </span>
+                  </div>
+                </div>
+              </Card>
+
+              {/* 
+              {/*4. Process Memory (RAM) 
+              <Card padding={4} elevation="low">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Cpu className="w-4 h-4 text-amber-500" />
+                    <h4 className="text-xs font-semibold text-neutral-900 dark:text-neutral-100">
+                      Process Memory (RSS)
+                    </h4>
+                  </div>
+                  <span className="font-mono text-xs font-medium text-neutral-900 dark:text-neutral-100">
+                     MB
+                  </span>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between text-neutral-500">
+                    <span>Heap Allocation:</span>
+                    <span className="font-mono text-neutral-700 dark:text-neutral-300">
+                      MB
+                    </span>
+                  </div>
+                  <ProgressBar
+                    label="Heap memory"
+                    value={heapPercent}
+                    max={100}
+                    isLabelHidden={true}
+                    variant={heapPercent > 85 ? "error" : "accent"}
+                  />
+                  <div className="flex justify-between text-neutral-500 pt-0.5">
+                    <span>Memory Pressure:</span>
+                    <span className="font-mono text-emerald-600 dark:text-emerald-400">
+                      {heapPercent < 80 ? "Healthy (< 80%)" : "Elevated"}
+                    </span>
+                  </div>
+                </div>
+              </Card>
+
+              {/* 5. API & Metadata Cache 
+              <Card padding={4} elevation="low">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Database className="w-4 h-4 text-emerald-500" />
+                    <h4 className="text-xs font-semibold text-neutral-900 dark:text-neutral-100">
+                      Metadata & API Cache
+                    </h4>
+                  </div>
+                  <Badge variant="info" label={`${cacheHitRatio}% Hit Ratio`} />
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between text-neutral-500">
+                    <span>Hits vs Misses:</span>
+                    <span className="font-mono text-neutral-700 dark:text-neutral-300">
+                      
+                    </span>
+                  </div>
+                  <ProgressBar
+                    label="Cache hit ratio"
+                    value={cacheHitRatio}
+                    max={100}
+                    isLabelHidden={true}
+                    variant="success"
+                  />
+                  <div className="flex justify-between text-neutral-500 pt-0.5">
+                    <span>Cache Storage:</span>
+                    <span className="font-mono text-neutral-500">
+                       MB
+                    </span>
+                  </div>
+                </div>
+              </Card>
+
+              {/* 6. Daemon Host & Uptime 
+              <Card padding={4} elevation="low">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-neutral-500" />
+                    <h4 className="text-xs font-semibold text-neutral-900 dark:text-neutral-100">
+                      Daemon Runtime
+                    </h4>
+                  </div>
+                  <Badge variant="neutral" label={`v${data.version}`} />
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Engine Uptime:</span>
+                    <span className="font-mono font-medium text-neutral-900 dark:text-neutral-100">
+                      {formatUptime(data.uptime_seconds)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Rate Limit Status:</span>
+                    <span className="font-mono text-emerald-600 dark:text-emerald-400">
+                      {data.rate_limit?.active ? `Throttled (${data.rate_limit.seconds_remaining}s)` : "Normal Throughput"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Target Host:</span>
+                    <span className="font-mono text-neutral-500 truncate max-w-[140px]" title={data.target}>
+                      {data.target}
+                    </span>
+                  </div>
+                </div>
+              </Card>
+              */}
+            </div>
+          </div>
+          
+          {/* Worker Threads & Queue Breakdown Panel */}
+          <Card padding={5} elevation="low">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-neutral-200 dark:border-neutral-800">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                  Concurrency Runtime
+                </p>
+                <h3 className="text-sm font-bold text-neutral-900 dark:text-neutral-100 mt-0.5">
+                  Worker Threads & Allocation
+                </h3>
+              </div>
+              <span className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 font-mono">
+                {onlineWorkersCount}/{totalWorkersCount} Threads Active
+              </span>
+            </div>
+
+            {/* Worker thread status badges */}
+            <div className="mt-4 flex flex-wrap gap-2">
+              {workerEntries.map(([name, active]) => (
+                <div
+                  key={name}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-mono font-medium transition ${
+                    active
+                      ? "border-emerald-300 dark:border-emerald-800/80 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300"
+                      : "border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-500"
+                  }`}
+                >
+                  {active ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  ) : (
+                    <XCircle className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                  )}
+                  <span>{name}</span>
+                </div>
               ))}
             </div>
-          ) : (
-            <p className="text-sm text-[#777]">
-              No items are currently in the queue.
-            </p>
-          )}
+
+            {/* Queue Breakdown by Status */}
+            <div className="mt-5 border-t border-neutral-200 dark:border-neutral-800 pt-4">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 mb-2.5">
+                Queue Breakdown by Status
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(data.queue.statuses).map(([status, count]) => (
+                  <div
+                    key={status}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-800/60 text-xs font-medium text-neutral-600 dark:text-neutral-300"
+                  >
+                    <span>{status}:</span>
+                    <span className="font-bold font-mono text-neutral-900 dark:text-neutral-100">
+                      {count}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Card>
+
+          {/* Integrated Update & Version Release Panel */}
+          <UpdatePanel currentVersion={config?.version || data.version} />
         </div>
-      </section>
-      <UpdatePanel currentVersion={config.version} />
+      )}
     </div>
   );
 };

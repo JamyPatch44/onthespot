@@ -393,8 +393,13 @@ def format_local_id(item_id):
 # ---------------------------------------------------------------------------
 def requeue_item(item: QueueItem) -> None:
     """Move *item* to the back of the queue and mark it available for RetryWorker to re-add to the pending queue If not cancelled."""
-    if item.item_status in [ItemStatus.CANCELLED, ItemStatus.UNAVAILABLE, ItemStatus.DOWNLOADED, ItemStatus.DELETED]:
-        pass
+    if item.item_status in [
+        ItemStatus.CANCELLED,
+        ItemStatus.UNAVAILABLE,
+        ItemStatus.DOWNLOADED,
+        ItemStatus.DELETED,
+    ] or not config.get("enable_retry_worker", False):
+        return
     with download_queue_lock:
         try:
             local_id = item.local_id
@@ -412,8 +417,8 @@ def requeue_item(item: QueueItem) -> None:
                 item.item_status,
             )
         except KeyError:
-            # Item was cleared from the queue while we were processing it.
-            pass
+            logger.error("Error removing adding back to pending queue %s", item.local_id)
+            return
 
 
 def _version_to_int(version):
