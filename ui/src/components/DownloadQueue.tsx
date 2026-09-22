@@ -25,13 +25,14 @@ import {
   Square,
   Trash2,
   User,
-  XCircle,
-  Zap
+  XCircle
 } from "lucide-react";
 import React, { useEffect, useState } from "react";
+import { getTargetBackendUrl } from "../lib/api";
 import { getServiceInfo } from "../lib/catalogServices";
 import { DownloadProfile, DownloadQueueItem, QueueBatchAction, QueueItemStatus } from "../types";
 import { PageHeader } from "./PageHeader";
+
 
 interface DownloadQueueProps {
   queue: DownloadQueueItem[];
@@ -42,8 +43,8 @@ interface DownloadQueueProps {
   onClearCompleted: () => Promise<void>;
   onClearFailed: () => Promise<void>;
   onRetryFailed: () => Promise<void>;
-  onAction: (local_id: string, action: "cancel" | "delete" | "retry") => Promise<void>;
-  onBatchAction: (local_ids: string[], action: QueueBatchAction, options?: any) => Promise<void>;
+  onAction: (local_id: number, action: "cancel" | "delete" | "retry") => Promise<void>;
+  onBatchAction: (local_ids: number[], action: QueueBatchAction, options?: any) => Promise<void>;
   onReorder?: (local_ids: string[]) => Promise<void>;
 }
 
@@ -60,10 +61,10 @@ export const DownloadQueue: React.FC<DownloadQueueProps> = ({
   onBatchAction,
 }) => {
   const [filter, setFilter] = useState<string>("All");
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   const [showSidePanel, setShowSidePanel] = useState<boolean>(true);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<number | null>(null);
 
   // Filtered queue items
   const filteredItems = queue.filter((item) => {
@@ -98,40 +99,14 @@ export const DownloadQueue: React.FC<DownloadQueueProps> = ({
   };
 
   const downloadingItems = queue.filter((i) => i.item_status === "Downloading");
-  const activeSpeed = downloadingItems.length > 0 ? "8.4 MB/s" : "0.0 MB/s";
-  const totalEta = downloadingItems.reduce((max, i) => Math.max(max, i.eta_seconds || 0), 0);
 
   const downloadFile = (item: DownloadQueueItem) => {
-    const extension = item.format?.toLowerCase().includes("mp3") ? "mp3" : "flac";
-    const title = item.name || "Track";
-    const artist = item.artist || "Unknown Artist";
-    const album = item.album || "Unknown Album";
-    const size = item.file_size || "Unknown Size";
-    const path = item.file_path || "Unknown Path";
-    const url = item.url || "N/A";
-
-    const content = `OnTheSpot - Audio Download Package
-===================================
-Track Name : ${title}
-Artist     : ${artist}
-Album      : ${album}
-Format     : ${item.format || "FLAC 1411 kbps"}
-File Size  : ${size}
-Export Path: ${path}
-Source URL : ${url}
-Downloaded : ${new Date().toLocaleString()}
-===================================
-Enjoy your high-quality media file!`;
-
-    const blob = new Blob([content], { type: "text/plain" });
-    const blobUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = blobUrl;
-    link.download = `${artist} - ${title}.${extension}`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(blobUrl);
+    if (item.file_path) {
+      const url = `${getTargetBackendUrl()}/queue/downloads/download?lid=${encodeURIComponent(item.local_id)}`;
+      window.open(url, '_blank');
+    } else {
+      alert("⚠️ File is still queued or downloading.");
+    }
   };
 
   const toggleSelectAll = () => {
@@ -142,7 +117,7 @@ Enjoy your high-quality media file!`;
     }
   };
 
-  const toggleSelectItem = (e: React.MouseEvent, id: string) => {
+  const toggleSelectItem = (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
     if (selectedIds.includes(id)) {
       setSelectedIds(selectedIds.filter((item) => item !== id));
@@ -151,17 +126,17 @@ Enjoy your high-quality media file!`;
     }
   };
 
-  const handleItemClick = (id: string) => {
+  const handleItemClick = (id: number) => {
     setSelectedItemId(id);
   };
 
-  const handleOpenDetails = (e: React.MouseEvent, id: string) => {
+  const handleOpenDetails = (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
     setSelectedItemId(id);
     setShowSidePanel(true);
   };
 
-  const copyUrl = (id: string, url?: string) => {
+  const copyUrl = (id: number, url?: string) => {
     if (!url) return;
     navigator.clipboard.writeText(url);
     setCopiedId(id);
@@ -174,7 +149,7 @@ Enjoy your high-quality media file!`;
         return <Badge variant="info" label="Downloading" />;
       case "Downloaded":
       case "Already Exists":
-        return <Badge variant="success" label={compact ? "Ready" : "Downloaded"} />;
+        return <Badge variant="success" label={compact ? "Ready" : status} />;
       case "Failed":
         return <Badge variant="error" label="Failed" />;
       case "Paused":
@@ -184,7 +159,7 @@ Enjoy your high-quality media file!`;
       case "Cancelled":
         return <Badge variant="neutral" label="Cancelled" />;
       default:
-        return <Badge variant="neutral" label={status} />;
+        return <Badge variant="info" label={status} />;
     }
   };
 
@@ -397,7 +372,7 @@ Enjoy your high-quality media file!`;
                       className={`group relative flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-3.5 rounded-xl border transition-all cursor-pointer select-none ${
                         isFocused
                           ? "bg-neutral-50 dark:bg-neutral-800/90 border-emerald-500/80 dark:border-emerald-500/80 shadow-xs ring-1 ring-emerald-500/30"
-                          : "bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700 hover:bg-neutral-50/60 dark:hover:bg-neutral-850/60"
+                          : "bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-600"
                       }`}
                     >
                       {/* Left: Checkbox, Queue Number, Artwork & Grouped Media Info */}
@@ -426,16 +401,11 @@ Enjoy your high-quality media file!`;
                           <img
                             src={
                               item.thumbnail ||
-                              "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=160&auto=format&fit=crop&q=80"
+                              "null"
                             }
                             alt={item.name}
                             className="w-full h-full object-cover"
                             referrerPolicy="no-referrer"
-                          />
-                          <span
-                            className="absolute top-1 left-1 w-2.5 h-2.5 rounded-full ring-1 ring-white/90 dark:ring-black/90 shadow-2xs"
-                            style={{ backgroundColor: serviceInfo.color }}
-                            title={serviceInfo.name}
                           />
                         </div>
 
@@ -447,7 +417,7 @@ Enjoy your high-quality media file!`;
                               {item.name}
                             </p>
                             <div className="shrink-0 scale-95 origin-left">
-                              {getStatusBadge(item.item_status, true)}
+                              {getStatusBadge(item.item_status, false)}
                             </div>
                           </div>
 
@@ -461,7 +431,7 @@ Enjoy your high-quality media file!`;
                                 <span className="text-neutral-300 dark:text-neutral-600">•</span>
                                 <span className="inline-flex items-center gap-1 truncate text-neutral-500 dark:text-neutral-400">
                                   <Disc className="w-3 h-3 text-neutral-400 shrink-0" />
-                                  <span className="truncate">{item.album}</span>
+                                  <span className="truncate">Part of Album: {item.album}</span>
                                 </span>
                               </>
                             )}
@@ -470,7 +440,7 @@ Enjoy your high-quality media file!`;
                                 <span className="text-neutral-300 dark:text-neutral-600 hidden sm:inline">•</span>
                                 <span className="hidden sm:inline-flex items-center gap-1 text-neutral-400 truncate max-w-[160px]">
                                   <Layers className="w-3 h-3 text-neutral-400 shrink-0" />
-                                  <span className="truncate">{item.playlist_name}</span>
+                                  <span className="truncate">Part of Playlist: {item.playlist_name}</span>
                                 </span>
                               </>
                             )}
@@ -496,13 +466,13 @@ Enjoy your high-quality media file!`;
                             {/* File Size Badge */}
                             {item.file_size && (
                               <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 border border-neutral-200/60 dark:border-neutral-700/60 text-neutral-600 dark:text-neutral-400 font-mono">
-                                {item.file_size}
+                                {Math.floor((Number(item.file_size) / 1024) / 1024)} MB
                               </span>
                             )}
 
                             {/* Target Profile */}
                             <span className="hidden md:inline-flex items-center px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 border border-neutral-200/60 dark:border-neutral-700/60 text-neutral-500 dark:text-neutral-400 font-mono">
-                              {item.profile_name || activeProfile}
+                              {item.download_profile.name || activeProfile}
                             </span>
                           </div>
                         </div>
@@ -663,7 +633,7 @@ Enjoy your high-quality media file!`;
                     className={`group relative flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer select-none ${
                       isFocused
                         ? "bg-neutral-50 dark:bg-neutral-800/90 border-emerald-500/80 dark:border-emerald-500/80 shadow-xs ring-1 ring-emerald-500/30"
-                        : "bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700 hover:bg-neutral-50/60 dark:hover:bg-neutral-850/60"
+                        : "bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-600"
                     }`}
                   >
                     {/* Checkbox for batch selection */}
@@ -726,20 +696,10 @@ Enjoy your high-quality media file!`;
                           </span>
                         ) : (
                           <span className="font-mono text-neutral-400 shrink-0">
-                            {item.target_format || "FLAC"}
+                            {item.target_format || ""}
                           </span>
                         )}
                       </div>
-
-                      {/* Mini progress bar if downloading */}
-                      {isDownloading && (
-                        <div className="w-full bg-neutral-200 dark:bg-neutral-800 h-1 rounded-full overflow-hidden mt-1.5">
-                          <div
-                            className="bg-emerald-500 h-full rounded-full transition-all duration-300"
-                            style={{ width: `${item.progress}%` }}
-                          />
-                        </div>
-                      )}
                     </div>
 
                     {/* Active chevron indicator */}
@@ -786,7 +746,7 @@ Enjoy your high-quality media file!`;
                             </span>
                             {getStatusBadge(selectedItem.item_status)}
                             <div
-                              className="px-2 py-0.5 rounded-md text-[10px] font-bold text-white shadow-xs flex items-center gap-1 "
+                              className="px-2 py-0.5 rounded-md text-[10px] font-bold text-black shadow-xs flex items-center gap-1 "
                               style={{ backgroundColor: serviceInfo.color }}
                             >
                               <span>{serviceInfo.name}</span>
@@ -863,14 +823,7 @@ Enjoy your high-quality media file!`;
                           />
 
                           <div className="flex items-center justify-between text-[11px] text-neutral-500 dark:text-neutral-400">
-                            {isDownloading ? (
-                              <>
-                                <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400 font-mono font-medium">
-                                  <Zap className="w-3.5 h-3.5 animate-pulse" />
-                                  {selectedItem.item_status}
-                                </span>
-                              </>
-                            ) : isDownloaded ? (
+                            {isDownloaded ? (
                               <span className="text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
                                 <Check className="w-3.5 h-3.5" /> File complete and saved to disk
                               </span>
@@ -880,12 +833,12 @@ Enjoy your high-quality media file!`;
                               </span>
                             ) : (
                               <span className="flex items-center gap-1 text-neutral-400">
-                                <Clock className="w-3.5 h-3.5" /> Waiting in download worker queue
+                                <Clock className="w-3.5 h-3.5" /> {selectedItem.item_status}
                               </span>
                             )}
 
                             {selectedItem.file_size && (
-                              <span className="font-mono font-medium">{selectedItem.file_size}</span>
+                              <span className="font-mono font-medium">{Math.floor((Number(selectedItem.file_size) / 1024) / 1024)}</span>
                             )}
                           </div>
 
@@ -950,7 +903,7 @@ Enjoy your high-quality media file!`;
                                 Profile Target
                               </span>
                               <span className="font-medium text-neutral-800 dark:text-neutral-200 mt-0.5 block truncate">
-                                {selectedItem.profile_name || activeProfile}
+                                {selectedItem.download_profile.name || activeProfile}
                               </span>
                             </div>
 
@@ -982,7 +935,7 @@ Enjoy your high-quality media file!`;
                         )}
 
                         {/* URL / Stream Source */}
-                        {selectedItem.url && (
+                        {selectedItem.item_url && (
                           <div className="space-y-1">
                             <span className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5">
                               <ExternalLink className="w-3.5 h-3.5 text-neutral-400" />
@@ -992,7 +945,7 @@ Enjoy your high-quality media file!`;
                               <input
                                 type="text"
                                 readOnly
-                                value={selectedItem.url}
+                                value={selectedItem.item_url}
                                 className="flex-1 px-2.5 py-1.5 rounded-lg bg-neutral-100/80 dark:bg-neutral-800/80 border border-neutral-200 dark:border-neutral-700 font-mono text-[11px] text-neutral-600 dark:text-neutral-300 truncate"
                               />
                               <Button
@@ -1006,7 +959,7 @@ Enjoy your high-quality media file!`;
                                     <Copy className="w-3.5 h-3.5" />
                                   )
                                 }
-                                onClick={() => copyUrl(selectedItem.local_id, selectedItem.url)}
+                                onClick={() => copyUrl(selectedItem.local_id, selectedItem.item_url)}
                               />
                             </div>
                           </div>

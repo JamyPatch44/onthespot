@@ -140,7 +140,7 @@ export async function addToQueue(
 }
 
 export async function executeQueueAction(
-  local_id: string,
+  local_id: number,
   action: "cancel" | "delete" | "retry"
 ): Promise<void> {
   const res = await request(
@@ -151,7 +151,7 @@ export async function executeQueueAction(
 }
 
 export async function executeQueueBatchAction(
-  local_ids: string[],
+  local_ids: number[],
   action: QueueBatchAction,
   options?: { profile_id?: string }
 ): Promise<void> {

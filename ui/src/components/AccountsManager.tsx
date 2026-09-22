@@ -204,7 +204,7 @@ export const AccountsManager: React.FC<AccountsManagerProps> = ({
   const [youtubeUploadComplete, setYoutubeUploadComplete] = useState(false);
 
   // Spotify companion state
-  const [spotifyAccessMode, setSpotifyAccessMode] = useState<SpotifyAccessMode>("local");
+  const [spotifyAccessMode, setSpotifyAccessMode] = useState<SpotifyAccessMode>("remote");
   const [companionPairing, setCompanionPairing] = useState<SpotifyCompanionPairing | null>(null);
   const [companionWaiting, setCompanionWaiting] = useState(false);
   const initialSpotifyCount = useRef(0);
@@ -307,10 +307,10 @@ export const AccountsManager: React.FC<AccountsManagerProps> = ({
 
   const backendUrl = getTargetBackendUrl() || window.location.origin;
   const companionCommand = companionPairing
-    ? `.\\.companion-venv\\Scripts\\python.exe companion\\run.py --server-url "${backendUrl}" --pairing-token "${companionPairing.pairing_token}" --cleanup`
+    ? `uv run python run.py --server-url "${backendUrl}" --pairing-token "${companionPairing.pairing_token}" --cleanup`
     : "";
-  const companionCloneCommand = `cd $HOME\ngit clone --branch fastapi-dev --single-branch https://github.com/JamyPatch44/onthespot.git OnTheSpot-companion\ncd .\\OnTheSpot-companion`;
-  const companionSetupCommand = `py -m venv .companion-venv\n.\\.companion-venv\\Scripts\\python.exe -m pip install -r companion\\requirements.txt`;
+  const companionCloneCommand = `cd $HOME\ngit clone --branch fastapi-dev --single-branch https://github.com/ots-downloader/onthespot.git onthespot\ncd .\\onthespot\\companion`;
+  const companionSetupCommand = `uv sync`;
 
   const youtubeExportInstallCommand = `$otsYtDlp = Join-Path $env:TEMP "OnTheSpot-youtube-auth"\npy -m venv $otsYtDlp\n& (Join-Path $otsYtDlp "Scripts\\python.exe") -m pip install --disable-pip-version-check --quiet --upgrade yt-dlp`;
   const youtubeExportCommand = `$otsYtDlp = Join-Path $env:TEMP "OnTheSpot-youtube-auth"\n& (Join-Path $otsYtDlp "Scripts\\python.exe") -m yt_dlp --cookies-from-browser ${youtubeBrowser} --cookies "$HOME\\Downloads\\youtube-cookies.txt"`;
@@ -429,6 +429,8 @@ export const AccountsManager: React.FC<AccountsManagerProps> = ({
         setShowModal(false);
         setUsername("");
         setToken("");
+      } else {
+        setShowModal(false);
       }
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Failed to add account.");
@@ -464,7 +466,7 @@ export const AccountsManager: React.FC<AccountsManagerProps> = ({
               </span>
             </div>
             <p className="mt-1.5 text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 max-w-2xl">
-              Accounts are automatically rotated to distribute API load, bypass rate limits, and provide lossless streaming endpoints.
+              Accounts are automatically rotated to distribute API load, bypass rate limits, and provide lossless streaming endpoints if available.
             </p>
           </div>
 
@@ -599,7 +601,7 @@ export const AccountsManager: React.FC<AccountsManagerProps> = ({
                     : youtubeSessionConfigured
                     ? "Session unavailable"
                     : youtubeStatus
-                    ? "Needs cookies"
+                    ? "Ready (No cookies)"
                     : "Session unverified"
                   : isPublicWorker
                   ? connected
@@ -963,6 +965,7 @@ export const AccountsManager: React.FC<AccountsManagerProps> = ({
                       <div className="grid gap-2 sm:grid-cols-2">
                         <button
                           type="button"
+                          disabled= {true}
                           aria-pressed={spotifyAccessMode === "local"}
                           onClick={() => {
                             setSpotifyAccessMode("local");
@@ -980,7 +983,8 @@ export const AccountsManager: React.FC<AccountsManagerProps> = ({
                             <Wifi className="h-4 w-4 text-emerald-500" /> Local network
                           </span>
                           <span className="mt-1 block text-xs text-neutral-500 dark:text-[#b3b3b3]">
-                            Use Spotify Connect directly on the same LAN.
+                            Coming Soon.
+                            Use Spotify Connect directly on the same Device.
                           </span>
                         </button>
 
@@ -1001,7 +1005,7 @@ export const AccountsManager: React.FC<AccountsManagerProps> = ({
                             <Globe className="h-4 w-4 text-amber-500" /> Remote access
                           </span>
                           <span className="mt-1 block text-xs text-neutral-500 dark:text-[#b3b3b3]">
-                            Use the local companion helper over VPN/HTTPS.
+                            Use the local companion helper over VPN/HTTPs.
                           </span>
                         </button>
                       </div>
@@ -1009,12 +1013,17 @@ export const AccountsManager: React.FC<AccountsManagerProps> = ({
                       {spotifyAccessMode === "remote" && (
                         <div className="rounded-lg border-l-4 border-amber-500 bg-amber-500/10 dark:bg-[#3b321d] p-3 text-xs leading-relaxed text-amber-800 dark:text-[#f6b94a] space-y-3">
                           <p className="font-semibold text-neutral-900 dark:text-white">
-                            Run this on the computer where Spotify is open—not Unraid/Docker.
+                            Run this on the computer where Spotify is open.
                           </p>
                           <p className="text-neutral-700 dark:text-neutral-300">
-                            Spotify and the companion computer must be on the same LAN for Spotify Connect discovery. The companion then sends the completed login to this OnTheSpot server over the address you opened here. Tailscale is one option; a VPN or secure HTTPS reverse proxy can work too.
+                            Spotify and the companion computer must be on the same network\LAN for Spotify Connect discovery. VPN or secure HTTPS reverse proxy should work too.
                           </p>
-
+                          <p className="font-semibold text-neutral-900 dark:text-white">Pre-requisites:</p>
+                          <ol className="list-decimal space-y-1 pl-4 text-neutral-700 dark:text-[#b3b3b3]">
+                            <li>Git CLI, you can install from https://git-scm.com/install</li>
+                            <li>uv, you can install from: https://docs.astral.sh/uv/getting-started/installation/</li>
+                          </ol>
+                          <p className="font-semibold text-neutral-900 dark:text-white">Steps:</p>
                           <ol className="list-decimal space-y-1 pl-4 text-neutral-700 dark:text-[#b3b3b3]">
                             <li>Download or clone this repository on the Spotify computer.</li>
                             <li>Open PowerShell in the repository folder.</li>
@@ -1027,7 +1036,7 @@ export const AccountsManager: React.FC<AccountsManagerProps> = ({
                           </p>
 
                           <div>
-                            <p className="font-semibold text-neutral-900 dark:text-white">If you need to download it:</p>
+                            <p className="font-semibold text-neutral-900 dark:text-white">Download the repo:</p>
                             <code className="mt-1 block overflow-x-auto whitespace-pre-wrap rounded-md bg-black/40 p-2 font-mono text-[11px] text-emerald-400">
                               {companionCloneCommand}
                             </code>
@@ -1062,7 +1071,7 @@ export const AccountsManager: React.FC<AccountsManagerProps> = ({
                             <div className="space-y-2 pt-2 border-t border-amber-500/30">
                               <p className="font-semibold text-neutral-900 dark:text-white">Final step: copy this into PowerShell</p>
                               <p className="text-[11px] text-neutral-600 dark:text-neutral-300">
-                                Click the button, switch to the PowerShell window, and paste the command there.
+                                Copy the command, switch to the PowerShell window, and paste the command there.
                               </p>
                               <code className="block overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-amber-500/50 bg-black/40 p-2 font-mono text-[11px] text-amber-300">
                                 {companionCommand}

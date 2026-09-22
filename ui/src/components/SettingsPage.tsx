@@ -28,7 +28,7 @@ interface SettingsPageProps {
   onUpdateValue: (key: string, value: any) => Promise<boolean>;
   onSave: () => Promise<boolean>;
   onReset: () => Promise<void>;
-  onActivateProfile: (profileId: string) => Promise<boolean>;
+  onActivateProfile: (profileId: string) => Promise<void>;
   onSaveProfile: (profile: DownloadProfile) => Promise<DownloadProfile>;
   onDeleteProfile: (profileId: string) => Promise<boolean>;
 }
@@ -649,11 +649,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           onClick={() => onActivateProfile(prof.id)}
                         />
                       )}
-                    </div>
-
-                    <div className="mt-3 pt-2.5 border-t border-neutral-100 dark:border-neutral-800 text-[11px] text-neutral-500 flex items-center justify-between">
-                      <span>Cover Art: {prof.embed_cover ? "Embedded" : "No"}</span>
-                      <span>Lyrics: {prof.embed_lyrics ? "Embedded" : "No"}</span>
                     </div>
                   </Card>
                 );

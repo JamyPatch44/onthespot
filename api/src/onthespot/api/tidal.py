@@ -40,6 +40,7 @@ def tidal_add_account_pt2(device_code):
     # and display url before starting worker in a thread
     # device_code, verification_url = tidal_add_account_pt1
     logger.info(f"Visit the following url to login: {device_code}")
+    counter = 0
     while True:
         data = {}
         data["client_id"] = CLIENT_ID
@@ -51,6 +52,9 @@ def tidal_add_account_pt2(device_code):
         if response.status_code != 200:
             logger.info(f"Token request pending: {response.json()}")
             time.sleep(3)
+            counter += 1
+            if counter > 30:
+                return False
             continue
 
         auth_status = response.json()

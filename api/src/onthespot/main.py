@@ -167,12 +167,14 @@ def add_tidal_account_worker(device_code):
     if tidal_add_account_pt2(device_code):
         config.set("active_account_number", len(account_pool))
         config.save()
+        logger.info("Tidal Worker Authorized. Account Added.")
         fillaccountpool.stop()
         time.sleep(1)
         relogin()
-        notification_hook("Login Complete", "Refresh the page")
+        notification_hook("Tidal Login Complete", "Refresh the page")
     else:
-        logger.info("Account Already Exists")
+        logger.error("Error Adding Account or Account already exists")
+        notification_hook("Login Error", "Check the logs")
 
 
 def search_service_catalogs(
@@ -837,9 +839,9 @@ async def download_file(lid):
     """
     file_path = None
     with download_queue_lock:
-        item = download_queue.get(str(lid))
-        if item is not None:
-            file_path = item.file_path
+        for item in download_queue.values():
+            if item.local_id == int(lid) and item.file_path != "":
+                file_path = item.file_path
     if not file_path or not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Downloaded file not found")
     file_name = os.path.basename(file_path)

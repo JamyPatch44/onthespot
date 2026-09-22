@@ -230,22 +230,6 @@ export default function App() {
     setPendingQueue(pending);
   };
 
-
-  // Queue Item handler
-  const handleQueueItem = async (item: SearchResultItem) => {
-    await addToQueue(item);
-    const updatedQueue = await fetchDownloadQueue();
-    setQueue(updatedQueue);
-
-    addNotification({
-      title: `Queued: ${item.name}`,
-      message: `Added '${item.name}' by ${item.artist} to download queue.`,
-      status: "Downloading",
-      thumbnail: item.thumbnail,
-      url: item.url,
-    });
-  };
-
   // Queue actions
   const handlePauseToggle = async () => {
     const isPaused = await toggleQueuePause();
@@ -256,7 +240,7 @@ export default function App() {
   };
 
   const handleQueueAction = async (
-    local_id: string,
+    local_id: number,
     action: "cancel" | "delete" | "retry"
   ) => {
     await executeQueueAction(local_id, action);
@@ -265,7 +249,7 @@ export default function App() {
   };
 
   const handleBatchAction = async (
-    local_ids: string[],
+    local_ids: number[],
     action: QueueBatchAction,
     options?: any
   ) => {
@@ -374,7 +358,7 @@ export default function App() {
     const profs = await fetchProfiles();
     setProfiles(profs);
     setConfig((prev) => ({ ...prev, active_download_profile: profileId }));
-    return true;
+    return;
   };
 
   const handleSaveProfile = async (profile: DownloadProfile) => {

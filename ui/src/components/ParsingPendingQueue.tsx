@@ -137,7 +137,7 @@ export const ParsingPendingQueue: React.FC<ParsingPendingQueueProps> = ({
     setSelectedItemIds(new Set());
   };
 
-  const handleProfileChange = async (profileId) => {
+  const handleProfileChange = async (profileId: string) => {
     onChangeActiveProfile(profileId)
     setSelectedProfileId(profileId)
   }

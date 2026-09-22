@@ -233,48 +233,53 @@ export interface PendingQueueItem {
 }
 
 export type QueueItemStatus =
-  | "Waiting"
-  | "Downloading"
-  | "Paused"
-  | "Downloaded"
-  | "Failed"
-  | "Cancelled"
-  | "Unavailable"
-  | "Already Exists";
+    | "Waiting"
+    | "Downloading"
+    | "Paused"
+    | "Converting"
+    | "Decrypting"
+    | "Getting Lyrics"
+    | "Setting Thumbnail"
+    | "Adding To M3U"
+    | "Downloading Subtitles"
+    | "Downloading Chapters"
+    | "Downloading Video"
+    | "Downloading Audio"
+    | "Downloaded"
+    | "Already Exists"
+    | "Failed"
+    | "Cancelled"
+    | "Unavailable"
+    | "Deleted"
 
-export interface DownloadQueueItem {
-  local_id: string;
-  available: boolean;
-  item_service: string;
-  item_type: string;
-  item_id: string;
-  item_status: QueueItemStatus;
-  file_path: string | null;
-  parent_category: string;
-  playlist_name: string;
-  playlist_by: string;
-  playlist_number?: number;
-  name: string;
-  artist: string;
-  album?: string;
-  thumbnail?: string;
-  progress: number;
-  error?: string;
-  retry_count?: number;
-  download_speed?: string;
-  file_size?: string;
-  length?: number;
-  format?: string;
-  bitrate?: string;
-  url?: string;
-  downloaded_bytes?: number;
-  total_bytes?: number;
-  eta_seconds?: number | null;
-  queue_position?: number;
-  priority?: number;
-  profile_id?: string;
-  profile_name?: string;
-}
+  export interface DownloadQueueItem {
+      name: string;
+      artist: string;
+      thumbnail?: string;
+      album?: string;
+      length?: number;
+      file_size?: string;
+      bitrate?: number;
+      local_id: number;
+      item_service: string;
+      item_type: string;
+      item_id: string;
+      item_url: string;
+      playlist_name: string;
+      playlist_by: string;
+      playlist_number?: string;
+      parent_category: string;
+      item_status: QueueItemStatus;
+      progress: number;
+      download_profile: DownloadProfile
+      target_format: string;
+      download_format: string;
+      temp_path: string;
+      file_path: string;
+      error?:string;
+      retry_count?: number;
+    }
+
 
 export interface DownloadProfile {
   id: string;
