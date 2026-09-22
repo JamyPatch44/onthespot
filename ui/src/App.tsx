@@ -51,6 +51,7 @@ import {
   saveOTSConfig,
   saveProfile,
   toggleQueuePause,
+  updateOTSConfigValue,
   uploadYouTubeCookies
 } from "./lib/api";
 import { useNotifications } from "./lib/notifications";
@@ -331,13 +332,20 @@ export default function App() {
   };
 
   // Settings actions
-  const handleUpdateConfigValue = async (key: string, value: any) => {
-    setConfig((prev) => ({ ...prev, [key]: value }));
-    return true;
+  const handleUpdateConfigValue = async (
+    key: string,
+    value: any,
+  ): Promise<boolean> => {
+    const ok = await updateOTSConfigValue(key, value);
+    if (ok) {
+      setConfig((prev) => ({ ...prev, [key]: value }));
+      return true
+    }
+    return false
   };
 
   const handleSaveConfig = async () => {
-    await saveOTSConfig(config);
+    await saveOTSConfig();
 
     addNotification({
       title: "Configuration Saved",

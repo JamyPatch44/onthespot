@@ -8,6 +8,9 @@ import { TextInput } from "@astryxdesign/core/TextInput";
 import {
   Cpu,
   Download,
+  Film,
+  Globe,
+  Key,
   Music,
   RefreshCw,
   RotateCcw,
@@ -20,6 +23,11 @@ import React, { useState } from "react";
 import { getTargetBackendUrl, setTargetBackendUrl, testBackendConnection } from "../lib/api";
 import { DownloadProfile, OTSConfig } from "../types";
 import { PageHeader } from "./PageHeader";
+
+
+/* -------------------------------------------------------------------------- */
+/* SettingsPage Component                                                     */
+/* -------------------------------------------------------------------------- */
 
 interface SettingsPageProps {
   config: OTSConfig;
@@ -66,15 +74,141 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setConnStatus(ok ? "connected" : "failed");
   };
 
+  const formatBytes = (bytes: number): string => {
+    if (!bytes || bytes <= 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  };
+
+  const inputClass =
+    "w-full px-3 py-1.5 text-xs rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-neutral-400";
+
+  /* ------------------------------------------------------------------------ */
+  /* Unified Dynamic Input Renderer                                           */
+  /* ------------------------------------------------------------------------ */
+
+  const renderInput = (field) => {
+    const rawVal = config[field.key];
+
+    switch (field.type) {
+      case "switch":
+        return (
+          <div key={field.key} className="py-1">
+            <Switch
+              label={field.label}
+              description={field.description}
+              value={Boolean(rawVal)}
+              onChange={(checked) => onUpdateValue(field.key, checked)}
+              labelPosition="start"
+              labelSpacing="spread"
+            />
+          </div>
+        );
+
+      case "number":
+        return (
+          <div key={field.key}>
+            <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
+              {field.label}
+            </label>
+            <input
+              type="number"
+              min={field.min}
+              max={field.max}
+              step={field.step}
+              value={rawVal ?? field.defaultValue ?? ""}
+              onChange={(e) => {
+                const parsed = field.isFloat
+                  ? parseFloat(e.target.value) || 0
+                  : parseInt(e.target.value, 10) || 0;
+                onUpdateValue(field.key, parsed);
+              }}
+              placeholder={field.placeholder}
+              className={inputClass}
+            />
+            {field.description && (
+              <p className="text-[11px] text-neutral-500 mt-1">{field.description}</p>
+            )}
+          </div>
+        );
+
+      case "select":
+        return (
+          <div key={field.key}>
+            <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
+              {field.label}
+            </label>
+            <select
+              value={rawVal ?? field.defaultValue ?? ""}
+              onChange={(e) => {
+                const val = field.isNumber
+                  ? parseInt(e.target.value, 10) || 0
+                  : e.target.value;
+                onUpdateValue(field.key, val);
+              }}
+              className={inputClass}
+            >
+              {field.options.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            {field.description && (
+              <p className="text-[11px] text-neutral-500 mt-1">{field.description}</p>
+            )}
+          </div>
+        );
+
+      case "string-array":
+        return (
+          <div key={field.key}>
+            <TextInput
+              label={field.label}
+              value={Array.isArray(rawVal) ? rawVal.join(field.delimiter ?? " ") : ""}
+              onChange={(val) =>
+                onUpdateValue(
+                  field.key,
+                  val.split(field.delimiter ?? " ").filter(Boolean)
+                )
+              }
+              description={field.description}
+              placeholder={field.placeholder}
+              size="md"
+            />
+          </div>
+        );
+
+      case "text":
+      case "password":
+      default:
+        return (
+          <div key={field.key}>
+            <TextInput
+              label={field.label}
+              type={field.type === "password" ? "password" : "text"}
+              value={rawVal ?? ""}
+              onChange={(val) => onUpdateValue(field.key, val)}
+              description={field.description}
+              placeholder={field.placeholder}
+              size="md"
+            />
+          </div>
+        );
+    }
+  };
+
   return (
     <div className="space-y-5" id="settings-view">
-      {/* Reusable PageHeader for Settings */}
+      {/* Page Header */}
       <PageHeader
         id="settings-page-header"
         icon={<Sliders className="w-5 h-5" />}
         title="Settings & Configuration"
         badge={isSavedNotice ? { label: "Saved Successfully", variant: "success" } : undefined}
-        description="Configure downloader concurrency, metadata embedding, directory paths, and audio profiles"
+        description="Configure downloader concurrency, metadata embedding, directory paths, video conversion, and API integrations"
         actions={
           <>
             <Button
@@ -103,330 +237,187 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               onChange={(tabId) => setActiveTab(tabId)}
               size="sm"
             >
-              <Tab
-                value="general"
-                label="General & Workers"
-                icon={<Cpu className="w-3.5 h-3.5" />}
-              />
-              <Tab
-                value="audio"
-                label="Audio & Output"
-                icon={<Music className="w-3.5 h-3.5" />}
-              />
-              <Tab
-                value="profiles"
-                label="Download Profiles"
-                icon={<Download className="w-3.5 h-3.5" />}
-              />
-              <Tab
-                value="metadata"
-                label="ID3 Tagging"
-                icon={<Tag className="w-3.5 h-3.5" />}
-              />
-              <Tab
-                value="backend"
-                label="Backend API"
-                icon={<Server className="w-3.5 h-3.5" />}
-              />
+              <Tab value="general" label="General & Workers" icon={<Cpu className="w-3.5 h-3.5" />} />
+              <Tab value="audio" label="Audio & Output" icon={<Music className="w-3.5 h-3.5" />} />
+              <Tab value="video" label="Video & Shows" icon={<Film className="w-3.5 h-3.5" />} />
+              <Tab value="metadata" label="Metadata & ID3" icon={<Tag className="w-3.5 h-3.5" />} />
+              <Tab value="integrations" label="Services & Auth" icon={<Key className="w-3.5 h-3.5" />} />
+              <Tab value="profiles" label="Download Profiles" icon={<Download className="w-3.5 h-3.5" />} />
+              <Tab value="backend" label="Backend & System" icon={<Server className="w-3.5 h-3.5" />} />
             </TabList>
           </div>
         }
       />
 
-      {/* Tab Panels */}
-
-      {/* 1. General & Workers */}
+      {/* ========================================================================= */}
+      {/* 1. GENERAL & WORKERS                                                      */}
+      {/* ========================================================================= */}
       {activeTab === "general" && (
         <div className="space-y-4" id="settings-tab-general">
           <Card padding={4} elevation="low">
             <div className="flex items-center gap-2 mb-4">
               <Cpu className="w-4 h-4 text-neutral-500" />
               <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-                Worker Thread Concurrency & Parameters
+                Worker Concurrency & Rate Limiting
               </h3>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <div>
-                <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
-                  Maximum Download Workers
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={8}
-                  value={config.maximum_download_workers || 2}
-                  onChange={(e) => onUpdateValue("maximum_download_workers", parseInt(e.target.value) || 1)}
-                  className="w-full px-3 py-1.5 text-xs rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-neutral-400"
-                />
-                <p className="text-[11px] text-neutral-500 mt-1">
-                  Simultaneous file streams. Keep at 2–3 to avoid rate limits on streaming accounts.
-                </p>
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[
+                { key: "maximum_download_workers", label: "Maximum Download Workers", type: "number", min: 1, max: 16, defaultValue: 2, description: "Simultaneous stream download threads." },
+                { key: "maximum_queue_workers", label: "Queue Polling Workers", type: "number", min: 1, max: 16, defaultValue: 4, description: "Tracks parsing and catalog gathering threads." },
+                { key: "download_delay", label: "Download Delay (Seconds)", type: "number", step: "0.1", min: 0, isFloat: true, defaultValue: 1.5, description: "Simulates organic playback requests." },
+                { key: "download_delay_variance", label: "Delay Variance (Seconds)", type: "number", step: "0.1", min: 0, isFloat: true, defaultValue: 0.5, description: "Random jitter window (± seconds)." },
+                { key: "download_chunk_size", label: "Download Chunk Size (Bytes)", type: "number", min: 1024, step: 1024, defaultValue: 1048576, description: "Direct stream buffer chunk size." },
+                { key: "api_request_delay", label: "API Request Delay (Seconds)", type: "number", step: "0.05", min: 0, isFloat: true, defaultValue: 0, description: "Pacing interval between catalog queries." },
+                { key: "api_retry_max_attempts", label: "API Retry Max Attempts", type: "number", min: 1, max: 20, defaultValue: 3 },
+                { key: "api_retry_base_delay", label: "API Retry Base Delay (Seconds)", type: "number", step: "0.5", min: 0, isFloat: true, defaultValue: 1 },
+                { key: "api_retry_max_delay", label: "API Retry Max Delay (Seconds)", type: "number", step: 1, min: 1, defaultValue: 30 },
+                { key: "retry_worker_delay", label: "Retry Worker Delay (Seconds)", type: "number", min: 1, max: 300, defaultValue: 5 },
+                { key: "active_account_number", label: "Active Account Index", type: "number", min: 0, defaultValue: 0 },
+              ].map(renderInput)}
+            </div>
 
-              <div>
-                <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
-                  Queue Polling Workers
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={8}
-                  value={config.maximum_queue_workers || 4}
-                  onChange={(e) => onUpdateValue("maximum_queue_workers", parseInt(e.target.value) || 1)}
-                  className="w-full px-3 py-1.5 text-xs rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-neutral-400"
-                />
-                <p className="text-[11px] text-neutral-500 mt-1">
-                  Background threads parsing track links and gathering album tracklists.
-                </p>
-              </div>
+            <div className="mt-5 pt-4 border-t border-neutral-200 dark:border-neutral-800 space-y-2">
+              {[
+                { key: "rotate_active_account_number", label: "Automatic Worker Account Rotation", type: "switch", description: "Distribute media load across authenticated accounts of the same service." },
+                { key: "enable_retry_worker", label: "Enable Background Retry Worker", type: "switch", description: "Periodically retry enqueued items that timed out or hit rate limits." },
+              ].map(renderInput)}
+            </div>
+          </Card>
 
-              <div>
-                <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
-                  Download Delay (Seconds)
-                </label>
-                <input
-                  type="number"
-                  step="0.5"
-                  min={0}
-                  value={config.download_delay || 1.5}
-                  onChange={(e) => onUpdateValue("download_delay", parseFloat(e.target.value) || 0)}
-                  className="w-full px-3 py-1.5 text-xs rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-neutral-400"
-                />
-                <p className="text-[11px] text-neutral-500 mt-1">
-                  Artificial delay between item downloads to simulate organic playback requests.
-                </p>
-              </div>
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              Application & System Preferences
+            </h3>
 
-              <div>
-                <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
-                  Download Delay Variance (Seconds)
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min={0}
-                  value={config.download_delay_variance || 0.5}
-                  onChange={(e) => onUpdateValue("download_delay_variance", parseFloat(e.target.value) || 0)}
-                  className="w-full px-3 py-1.5 text-xs rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-neutral-400"
-                />
-                <p className="text-[11px] text-neutral-500 mt-1">
-                  Adds random variance (± seconds) to delay to break static automation footprints.
-                </p>
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[
+                {
+                  key: "theme",
+                  label: "Theme Appearance",
+                  type: "select",
+                  defaultValue: "system",
+                  options: [
+                    { value: "system", label: "System Default" },
+                    { value: "dark", label: "Dark Mode" },
+                    { value: "light", label: "Light Mode" },
+                  ],
+                },
+                { key: "language", label: "Language Code", type: "text", placeholder: "en" },
+                { key: "language_index", label: "Language Index", type: "number", min: 0, defaultValue: 0 },
+                { key: "update_repository", label: "Update Repository URL", type: "text", placeholder: "https://github.com/..." },
+                { key: "update_check_interval_hours", label: "Update Check Interval (Hours)", type: "number", min: 1, defaultValue: 24 },
+              ].map(renderInput)}
+            </div>
 
-              <div>
-                <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
-                  API Retry Attempts
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={config.api_retry_max_attempts || 3}
-                  onChange={(e) => onUpdateValue("api_retry_max_attempts", parseInt(e.target.value) || 1)}
-                  className="w-full px-3 py-1.5 text-xs rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-neutral-400"
-                />
-                <p className="text-[11px] text-neutral-500 mt-1">
-                  Maximum retries for failed chunks before moving to the Failed state.
-                </p>
-              </div>
+            <div className="mt-5 pt-4 border-t border-neutral-200 dark:border-neutral-800 space-y-2">
+              {[
+                { key: "check_for_updates", label: "Check for Updates Automatically", type: "switch", description: "Query the release repository on launch and intervals." },
+                { key: "close_to_tray", label: "Close to System Tray", type: "switch", description: "Keep running in background tray when closing the window." },
+                { key: "mirror_spotify_playback", label: "Mirror Spotify Playback", type: "switch", description: "Synchronize download queue to currently playing Spotify sessions." },
+                { key: "windows_10_explorer_thumbnails", label: "Windows 10 Explorer Thumbnail Support", type: "switch", description: "Format cover streams for standard Explorer folder caching." },
+                { key: "debug_mode", label: "Debug Logging Mode", type: "switch", description: "Output verbose internal states and network request traces." },
+              ].map(renderInput)}
+            </div>
+          </Card>
 
-              <div>
-                <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
-                  Retry Worker Delay (Minutes)
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={60}
-                  value={config.retry_worker_delay || 5}
-                  onChange={(e) => onUpdateValue("retry_worker_delay", parseInt(e.target.value) || 1)}
-                  className="w-full px-3 py-1.5 text-xs rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-neutral-400"
-                />
-                <p className="text-[11px] text-neutral-500 mt-1">
-                  Cool-down window before re-triggering downloads for rate-limited objects.
-                </p>
-              </div>
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              UI Controls & Queue Item Action Buttons
+            </h3>
 
-              <div>
-                <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
-                  Max Search Results per Service
-                </label>
-                <input
-                  type="number"
-                  min={5}
-                  max={100}
-                  value={config.max_search_results || 20}
-                  onChange={(e) => onUpdateValue("max_search_results", parseInt(e.target.value) || 20)}
-                  className="w-full px-3 py-1.5 text-xs rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-neutral-400"
-                />
-                <p className="text-[11px] text-neutral-500 mt-1">
-                  Limits the maximum items fetched per single query across service catalogs.
-                </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              {renderInput({
+                key: "thumbnail_size",
+                label: "Thumbnail Render Size (Pixels)",
+                type: "number",
+                min: 32,
+                max: 512,
+                step: 16,
+                defaultValue: 64,
+              })}
+            </div>
+
+            <div className="space-y-2">
+              {[
+                { key: "show_search_thumbnails", label: "Show Search Thumbnails", type: "switch", description: "Display album artwork beside catalog search results." },
+                { key: "show_download_thumbnails", label: "Show Download Queue Thumbnails", type: "switch", description: "Display media artwork next to active items in queue." },
+                { key: "disable_download_popups", label: "Disable Download Popups", type: "switch", description: "Suppress banner notifications when adding items to queue." },
+              ].map(renderInput)}
+            </div>
+
+            <div className="mt-5 pt-4 border-t border-neutral-200 dark:border-neutral-800">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-3">
+                Visible Item Buttons on Queue Cards
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {[
+                  { key: "download_copy_btn", label: "Copy URL", type: "switch" },
+                  { key: "download_open_btn", label: "Open File", type: "switch" },
+                  { key: "download_locate_btn", label: "Locate Folder", type: "switch" },
+                  { key: "download_delete_btn", label: "Delete Item", type: "switch" },
+                ].map(renderInput)}
               </div>
             </div>
 
-            <div className="mt-6 pt-5 border-t border-neutral-200 dark:border-neutral-800 space-y-4">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-2">
-                Concurrency &amp; Automation Toggles
+            <div className="mt-5 pt-4 border-t border-neutral-200 dark:border-neutral-800">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-3">
+                Download Queue Status Visibility Filters
               </h4>
-
-              <div className="divide-y divide-neutral-100 dark:divide-neutral-800/60 space-y-4">
-                <div className="pt-2 first:pt-0">
-                  <Switch
-                    label="Automatic Worker Account Rotation"
-                    description="Rotate across all authenticated accounts of the same service to distribute download load."
-                    value={Boolean(config.rotate_active_account_number)}
-                    onChange={(checked) => onUpdateValue("rotate_active_account_number", checked)}
-                    labelPosition="start"
-                    labelSpacing="spread"
-                  />
-                </div>
-
-                <div className="pt-4">
-                  <Switch
-                    label="Automatic Retry Worker"
-                    description="Automatically re-enqueue items that failed due to temporary network timeouts or rate limits."
-                    value={Boolean(config.enable_retry_worker)}
-                    onChange={(checked) => onUpdateValue("enable_retry_worker", checked)}
-                    labelPosition="start"
-                    labelSpacing="spread"
-                  />
-                </div>
-
-                <div className="pt-4">
-                  <Switch
-                    label="Cache API Connection Calls"
-                    description="Enable local memory caching of API metadata retrievals to significantly accelerate duplicate searches."
-                    value={Boolean(config.cache_api_calls)}
-                    onChange={(checked) => onUpdateValue("cache_api_calls", checked)}
-                    labelPosition="start"
-                    labelSpacing="spread"
-                  />
-                </div>
-
-                <div className="pt-4">
-                  <Switch
-                    label="Debug Logging Mode"
-                    description="Output verbose payload diagnostics, authentication tokens, and raw HTTP responses to the log viewer."
-                    value={Boolean(config.debug_mode)}
-                    onChange={(checked) => onUpdateValue("debug_mode", checked)}
-                    labelPosition="start"
-                    labelSpacing="spread"
-                  />
-                </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {[
+                  { key: "download_queue_show_waiting", label: "Show Waiting Items", type: "switch" },
+                  { key: "download_queue_show_failed", label: "Show Failed Items", type: "switch" },
+                  { key: "download_queue_show_cancelled", label: "Show Cancelled Items", type: "switch" },
+                  { key: "download_queue_show_unavailable", label: "Show Unavailable Items", type: "switch" },
+                  { key: "download_queue_show_completed", label: "Show Completed Items", type: "switch" },
+                ].map(renderInput)}
               </div>
             </div>
+          </Card>
 
-            <div className="mt-6 pt-5 border-t border-neutral-200 dark:border-neutral-800 space-y-4">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-2">
-                UI &amp; Visual Preference Toggles
-              </h4>
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              Catalog Search Queries & Filters
+            </h3>
 
-              <div className="divide-y divide-neutral-100 dark:divide-neutral-800/60 space-y-4">
-                <div className="pt-2 first:pt-0">
-                  <Switch
-                    label="Show Search Thumbnails"
-                    description="Display high-resolution cover artwork thumbnails directly in search catalog results."
-                    value={Boolean(config.show_search_thumbnails)}
-                    onChange={(checked) => onUpdateValue("show_search_thumbnails", checked)}
-                    labelPosition="start"
-                    labelSpacing="spread"
-                  />
-                </div>
-
-                <div className="pt-4">
-                  <Switch
-                    label="Show Download Thumbnails"
-                    description="Display media artwork inside the download queue cards for immediate item recognition."
-                    value={Boolean(config.show_download_thumbnails)}
-                    onChange={(checked) => onUpdateValue("show_download_thumbnails", checked)}
-                    labelPosition="start"
-                    labelSpacing="spread"
-                  />
-                </div>
-
-                <div className="pt-4">
-                  <Switch
-                    label="Disable Download Popups"
-                    description="Do not display instant banner messages or toast notifications when sending new files to queue."
-                    value={Boolean(config.disable_download_popups)}
-                    onChange={(checked) => onUpdateValue("disable_download_popups", checked)}
-                    labelPosition="start"
-                    labelSpacing="spread"
-                  />
-                </div>
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              {[
+                { key: "max_search_results", label: "Max Search Results per Query", type: "number", min: 1, max: 100, defaultValue: 20 },
+                { key: "search_prefix", label: "Default Search Prefix", type: "text", placeholder: "e.g. spotify: or artist:" },
+              ].map(renderInput)}
             </div>
 
-            <div className="mt-6 pt-5 border-t border-neutral-200 dark:border-neutral-800 space-y-4">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-2">
-                Service Search Filters
-              </h4>
-              <p className="text-[11px] text-neutral-500 mb-4">
-                Toggle which specific media categories are targeted and requested during universal search queries.
-              </p>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="p-3 rounded-lg border border-neutral-200/50 dark:border-neutral-800/60 bg-neutral-50/50 dark:bg-neutral-900/30">
-                  <Switch
-                    label="Tracks"
-                    value={Boolean(config.enable_search_tracks)}
-                    onChange={(checked) => onUpdateValue("enable_search_tracks", checked)}
-                    labelPosition="start"
-                    labelSpacing="spread"
-                  />
+            <div className="space-y-4">
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-2">
+                  Universal Search Content Categories
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {[
+                    { key: "enable_search_tracks", label: "Search Tracks", type: "switch" },
+                    { key: "enable_search_albums", label: "Search Albums", type: "switch" },
+                    { key: "enable_search_playlists", label: "Search Playlists", type: "switch" },
+                    { key: "enable_search_artists", label: "Search Artists", type: "switch" },
+                    { key: "enable_search_episodes", label: "Search Episodes", type: "switch" },
+                    { key: "enable_search_podcasts", label: "Search Podcasts", type: "switch" },
+                    { key: "enable_search_audiobooks", label: "Search Audiobooks", type: "switch" },
+                  ].map(renderInput)}
                 </div>
+              </div>
 
-                <div className="p-3 rounded-lg border border-neutral-200/50 dark:border-neutral-800/60 bg-neutral-50/50 dark:bg-neutral-900/30">
-                  <Switch
-                    label="Albums"
-                    value={Boolean(config.enable_search_albums)}
-                    onChange={(checked) => onUpdateValue("enable_search_albums", checked)}
-                    labelPosition="start"
-                    labelSpacing="spread"
-                  />
-                </div>
-
-                <div className="p-3 rounded-lg border border-neutral-200/50 dark:border-neutral-800/60 bg-neutral-50/50 dark:bg-neutral-900/30">
-                  <Switch
-                    label="Playlists"
-                    value={Boolean(config.enable_search_playlists)}
-                    onChange={(checked) => onUpdateValue("enable_search_playlists", checked)}
-                    labelPosition="start"
-                    labelSpacing="spread"
-                  />
-                </div>
-
-                <div className="p-3 rounded-lg border border-neutral-200/50 dark:border-neutral-800/60 bg-neutral-50/50 dark:bg-neutral-900/30">
-                  <Switch
-                    label="Artists"
-                    value={Boolean(config.enable_search_artists)}
-                    onChange={(checked) => onUpdateValue("enable_search_artists", checked)}
-                    labelPosition="start"
-                    labelSpacing="spread"
-                  />
-                </div>
-
-                <div className="p-3 rounded-lg border border-neutral-200/50 dark:border-neutral-800/60 bg-neutral-50/50 dark:bg-neutral-900/30">
-                  <Switch
-                    label="Podcasts"
-                    value={Boolean(config.enable_search_podcasts)}
-                    onChange={(checked) => onUpdateValue("enable_search_podcasts", checked)}
-                    labelPosition="start"
-                    labelSpacing="spread"
-                  />
-                </div>
-
-                <div className="p-3 rounded-lg border border-neutral-200/50 dark:border-neutral-800/60 bg-neutral-50/50 dark:bg-neutral-900/30">
-                  <Switch
-                    label="Audiobooks"
-                    value={Boolean(config.enable_search_audiobooks)}
-                    onChange={(checked) => onUpdateValue("enable_search_audiobooks", checked)}
-                    labelPosition="start"
-                    labelSpacing="spread"
-                  />
+              <div className="pt-3 border-t border-neutral-200 dark:border-neutral-800">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-2">
+                  Fast Filter Quick-Toggles (f_search)
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {[
+                    { key: "f_search_tracks", label: "Fast Filter Tracks", type: "switch" },
+                    { key: "f_search_albums", label: "Fast Filter Albums", type: "switch" },
+                    { key: "f_search_artists", label: "Fast Filter Artists", type: "switch" },
+                    { key: "f_search_playlists", label: "Fast Filter Playlists", type: "switch" },
+                  ].map(renderInput)}
                 </div>
               </div>
             </div>
@@ -434,171 +425,409 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         </div>
       )}
 
-      {/* 2. Audio & Output */}
+      {/* ========================================================================= */}
+      {/* 2. AUDIO & OUTPUT                                                         */}
+      {/* ========================================================================= */}
       {activeTab === "audio" && (
         <div className="space-y-4" id="settings-tab-audio">
           <Card padding={4} elevation="low">
             <div className="flex items-center gap-2 mb-4">
               <Music className="w-4 h-4 text-neutral-500" />
               <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-                Download Paths &amp; File Formatting
+                Audio Storage Paths & Naming Formatters
               </h3>
             </div>
 
             <div className="space-y-4">
-              <TextInput
-                label="Destination Music Folder"
-                type="text"
-                value={config.audio_download_path || "/music/OnTheSpot"}
-                onChange={(val) => onUpdateValue("audio_download_path", val)}
-                description="Root directory where all downloaded music will be structured and saved."
-                size="md"
-              />
-
-              <TextInput
-                label="Track File Name Pattern"
-                type="text"
-                value={config.track_path_formatter || "{artist}/{album}/{track_number} - {title}"}
-                onChange={(val) => onUpdateValue("track_path_formatter", val)}
-                description="Available tags: {artist}, {album}, {track_number}, {title}, {year}, {genre}"
-                size="md"
-              />
-
-              <TextInput
-                label="Playlist Folder Pattern"
-                type="text"
-                value={config.playlist_path_formatter || "Playlists/{playlist_name}/{track_number} - {title}"}
-                onChange={(val) => onUpdateValue("playlist_path_formatter", val)}
-                description="Subdirectory naming convention for queued playlist items."
-                size="md"
-              />
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                <TextInput
-                  label="Podcast Directory Pattern"
-                  type="text"
-                  value={config.podcast_path_formatter || "Podcasts/{podcast_name}/{release_date} - {title}"}
-                  onChange={(val) => onUpdateValue("podcast_path_formatter", val)}
-                  description="Subdirectory naming convention for podcast series."
-                  size="md"
-                />
-
-                <TextInput
-                  label="Podcast File Format"
-                  type="text"
-                  value={config.podcast_file_format || "mp3"}
-                  onChange={(val) => onUpdateValue("podcast_file_format", val)}
-                  description="Default target audio container for voice streams (e.g., mp3, m4a)."
-                  size="md"
-                />
-
-                <TextInput
-                  label="Album Cover Image Format"
-                  type="text"
-                  value={config.album_cover_format || "jpg"}
-                  onChange={(val) => onUpdateValue("album_cover_format", val)}
-                  description="Format for separate folder cover assets (e.g., jpg, png)."
-                  size="md"
-                />
-
-                <div>
-                  <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
-                    Audio Resampling Sample Rate (Hertz)
-                  </label>
-                  <input
-                    type="number"
-                    min={22050}
-                    max={192000}
-                    step={100}
-                    value={config.file_hertz || 44100}
-                    onChange={(e) => onUpdateValue("file_hertz", parseInt(e.target.value) || 44100)}
-                    className="w-full px-3 py-1.5 text-xs rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-neutral-400"
-                  />
-                  <p className="text-[11px] text-neutral-500 mt-1">
-                    Forces output audio resampling. Standard defaults are 44100 or 48000.
-                  </p>
-                </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {[
+                  { key: "audio_download_path", label: "Audio Download Path", type: "text", placeholder: "/music/OnTheSpot", description: "Primary directory." },
+                  { key: "export_folder_path", label: "Export Folder Path", type: "text", description: "Conversion export folder." },
+                  { key: "playlist_backup_folder_path", label: "Playlist Backup Folder", type: "text", description: "Folder for playlist backups." },
+                ].map(renderInput)}
               </div>
 
-              <div className="pt-5 border-t border-neutral-200 dark:border-neutral-800 space-y-4">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-500">
-                  Output &amp; Streaming Customization
-                </h4>
+              {[
+                { key: "track_path_formatter", label: "Track File Path Formatter", type: "text", description: "Tags: {artist}, {album}, {track_number}, {disc_number}, {title}, {year}, {genre}" },
+                { key: "playlist_path_formatter", label: "Playlist Path Formatter", type: "text", description: "Layout when 'Use Playlist Path Structure' is enabled." },
+              ].map(renderInput)}
 
-                <div className="divide-y divide-neutral-100 dark:divide-neutral-800/60 space-y-4">
-                  <div className="pt-2 first:pt-0">
-                    <Switch
-                      label="Use Playlist Path Structure"
-                      description="Automatically isolate queued playlist tracks inside the custom playlist subdirectory pattern instead of standard artist/album layout."
-                      value={Boolean(config.use_playlist_path)}
-                      onChange={(checked) => onUpdateValue("use_playlist_path", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[
+                  { key: "podcast_path_formatter", label: "Podcast Path Formatter", type: "text" },
+                  { key: "podcast_file_format", label: "Podcast File Format", type: "text", description: "Target container for voice episodes." },
+                ].map(renderInput)}
+              </div>
 
-                  <div className="pt-4">
-                    <Switch
-                      label="Create M3U8 Playlist Files"
-                      description="Generate standard .m3u8 playlist files inside playlist folders for external media scrapers."
-                      value={Boolean(config.create_m3u_file)}
-                      onChange={(checked) => onUpdateValue("create_m3u_file", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {[
+                  { key: "album_cover_format", label: "Album Cover Format", type: "text", description: "Artwork format (jpg, png)." },
+                  { key: "illegal_character_replacement", label: "Illegal Character Replacement", type: "text", description: "Replaces / \\ ? * : | < >" },
+                  { key: "file_hertz", label: "Audio Sample Rate (Hertz)", type: "number", min: 22050, max: 192000, step: 100, defaultValue: 44100, description: "Output sample rate (e.g. 44100, 48000)." },
+                ].map(renderInput)}
+              </div>
 
-                  <div className="pt-4">
-                    <Switch
-                      label="Save Separate Album Artwork Image"
-                      description="Extract and save folder.jpg or cover.jpg alongside audio tracks inside directory folders."
-                      value={Boolean(config.save_album_cover)}
-                      onChange={(checked) => onUpdateValue("save_album_cover", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
+              {renderInput({
+                key: "ffmpeg_args",
+                label: "Custom FFmpeg Arguments",
+                type: "string-array",
+                description: "Space-delimited arguments forwarded directly to the FFmpeg transcoder.",
+              })}
 
-                  <div className="pt-4">
-                    <Switch
-                      label="Apply Custom Conversion Bitrate"
-                      description="Convert output tracks utilizing specified constant bitrate presets where supported."
-                      value={Boolean(config.use_custom_file_bitrate)}
-                      onChange={(checked) => onUpdateValue("use_custom_file_bitrate", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
+              <div className="pt-4 border-t border-neutral-200 dark:border-neutral-800 space-y-2">
+                {[
+                  { key: "use_playlist_path", label: "Use Playlist Path Structure", type: "switch", description: "Store playlist tracks inside a dedicated playlist directory." },
+                  { key: "use_double_digit_path_numbers", label: "Use Double Digit Numbers", type: "switch", description: "Zero-pad track and disc numbers (01, 02...) in file paths." },
+                  { key: "translate_file_path", label: "Translate File Paths", type: "switch", description: "Convert non-ASCII characters to standard Latin equivalents in file paths." },
+                ].map(renderInput)}
+              </div>
+            </div>
+          </Card>
 
-                  <div className="pt-4">
-                    <Switch
-                      label="Raw Media Download"
-                      description="Write directly streamed chunks straight to file storage without executing merging or decoding operations."
-                      value={Boolean(config.raw_media_download)}
-                      onChange={(checked) => onUpdateValue("raw_media_download", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              M3U &amp; M3U8 Playlist Export Options
+            </h3>
 
-                  <div className="pt-4">
-                    <Switch
-                      label="Discard Unsynced Lyrics"
-                      description="Filter lyrics download routines and only store time-synchronized lyric packages (.lrc format)."
-                      value={Boolean(config.only_download_synced_lyrics)}
-                      onChange={(checked) => onUpdateValue("only_download_synced_lyrics", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
-                </div>
+            <div className="space-y-4">
+              {renderInput({
+                key: "create_m3u_file",
+                label: "Create M3U Playlist Files",
+                type: "switch",
+                description: "Automatically generate playlist index files alongside downloaded playlists.",
+              })}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[
+                  { key: "m3u_path_formatter", label: "M3U Path Formatter", type: "text" },
+                  { key: "m3u_format", label: "M3U Format Flavor", type: "text" },
+                  { key: "extinf_separator", label: "EXTINF Separator", type: "text" },
+                  { key: "extinf_label", label: "EXTINF Label Pattern", type: "text" },
+                ].map(renderInput)}
+              </div>
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              Audio Bitrate, Lyrics &amp; Artwork
+            </h3>
+
+            <div className="space-y-2">
+              {[
+                { key: "use_custom_file_bitrate", label: "Apply Custom Conversion Bitrate", type: "switch", description: "Re-encode items using specified bitrate boundaries." },
+                { key: "raw_media_download", label: "Raw Media Download", type: "switch", description: "Write directly streamed chunks to disk without decoding." },
+                { key: "save_album_cover", label: "Save Separate Album Artwork Image", type: "switch", description: "Save folder.jpg or cover.jpg alongside audio tracks." },
+                { key: "download_lyrics", label: "Download Lyrics", type: "switch", description: "Retrieve track lyrics from catalog providers." },
+                { key: "save_lrc_file", label: "Save .LRC Lyrics Files", type: "switch", description: "Save synchronized lyric files alongside audio tracks." },
+                { key: "only_download_synced_lyrics", label: "Only Download Synced Lyrics", type: "switch", description: "Skip lyrics if time-synced markers are unavailable." },
+                { key: "only_download_plain_lyrics", label: "Only Download Plain Lyrics", type: "switch", description: "Prefer un-synced plain text lines over timed files." },
+              ].map(renderInput)}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 3. VIDEO & SHOWS                                                          */}
+      {/* ========================================================================= */}
+      {activeTab === "video" && (
+        <div className="space-y-4" id="settings-tab-video">
+          <Card padding={4} elevation="low">
+            <div className="flex items-center gap-2 mb-4">
+              <Film className="w-4 h-4 text-neutral-500" />
+              <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                Video Storage Paths &amp; Quality Parameters
+              </h3>
+            </div>
+
+            <div className="space-y-4">
+              {renderInput({
+                key: "video_download_path",
+                label: "Video Download Destination Folder",
+                type: "text",
+                placeholder: "/videos/OnTheSpot",
+                description: "Base destination for movies, TV series, and video episodes.",
+              })}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[
+                  { key: "movie_path_formatter", label: "Movie Path Formatter", type: "text" },
+                  { key: "movie_file_format", label: "Movie File Format", type: "text" },
+                  { key: "show_path_formatter", label: "TV Show Path Formatter", type: "text" },
+                  { key: "show_file_format", label: "TV Show File Format", type: "text" },
+                ].map(renderInput)}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {[
+                  {
+                    key: "preferred_video_resolution",
+                    label: "Preferred Video Resolution",
+                    type: "select",
+                    isNumber: true,
+                    defaultValue: 1080,
+                    options: [
+                      { value: 2160, label: "4K UHD (2160p)" },
+                      { value: 1440, label: "QHD (1440p)" },
+                      { value: 1080, label: "FHD (1080p)" },
+                      { value: 720, label: "HD (720p)" },
+                      { value: 480, label: "SD (480p)" },
+                    ],
+                  },
+                  { key: "preferred_audio_language", label: "Preferred Audio Language", type: "text", placeholder: "en" },
+                  { key: "preferred_subtitle_language", label: "Preferred Subtitle Language", type: "text", placeholder: "en" },
+                ].map(renderInput)}
+              </div>
+
+              <div className="pt-4 border-t border-neutral-200 dark:border-neutral-800 space-y-2">
+                {[
+                  { key: "download_subtitles", label: "Download Subtitles", type: "switch", description: "Extract subtitle streams into video containers or .srt files." },
+                  { key: "download_chapters", label: "Download Video Chapters", type: "switch", description: "Embed chapter markers into output video containers." },
+                  { key: "download_all_available_audio", label: "Download All Available Audio Tracks", type: "switch", description: "Preserve all available localized audio language tracks." },
+                  { key: "download_all_available_subtitles", label: "Download All Available Subtitle Languages", type: "switch", description: "Keep every subtitle stream provided by the source catalog." },
+                ].map(renderInput)}
+              </div>
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              Video-to-Audio (V2A) Extraction
+            </h3>
+
+            <div className="space-y-4">
+              {renderInput({
+                key: "v2a_enable",
+                label: "Enable Automatic Video-to-Audio Extraction",
+                type: "switch",
+                description: "Automatically transcode downloaded video streams into audio files.",
+              })}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[
+                  { key: "v2a_preferred_codec", label: "V2A Target Codec", type: "text", placeholder: "mp3" },
+                  { key: "v2a_preferred_bitrate", label: "V2A Target Bitrate (kbps)", type: "number", min: 64, max: 512, step: 32, defaultValue: 320 },
+                ].map(renderInput)}
               </div>
             </div>
           </Card>
         </div>
       )}
 
-      {/* 3. Download Profiles */}
+      {/* ========================================================================= */}
+      {/* 4. METADATA & ID3                                                         */}
+      {/* ========================================================================= */}
+      {activeTab === "metadata" && (
+        <div className="space-y-4" id="settings-tab-metadata">
+          <Card padding={4} elevation="low">
+            <div className="flex items-center gap-2 mb-4">
+              <Tag className="w-4 h-4 text-neutral-500" />
+              <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                Metadata Tags &amp; Field Delimiters
+              </h3>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              {[
+                { key: "metadata_separator", label: "Metadata Multi-Value Separator", type: "text", description: "Delimiter between multiple artists or genres." },
+                { key: "explicit_label", label: "Explicit Advisory Label", type: "text", description: "Marker applied to explicit tracks." },
+              ].map(renderInput)}
+            </div>
+
+            <div className="space-y-2 pt-2">
+              {[
+                { key: "overwrite_existing_metadata", label: "Overwrite Existing Metadata", type: "switch", description: "Overwrite pre-existing ID3 tags in media files." },
+                { key: "cache_metadata_in_queue", label: "Cache Queue Metadata in Memory", type: "switch", description: "Keep track metadata cached to avoid duplicate requests." },
+                { key: "prefer_composer_as_album_artist", label: "Prefer Composer as Album Artist", type: "switch", description: "Assign classical music composer to Album Artist tag frame." },
+                { key: "shorten_composer_tag", label: "Shorten Composer Tag", type: "switch", description: "Omit dates and prefixes from composer metadata frames." },
+              ].map(renderInput)}
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              Extended Catalog Scraping
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {[
+                { key: "fetch_genre_metadata", label: "Fetch Genre Metadata", type: "switch", description: "Enrich missing track genres from MusicBrainz/services." },
+                { key: "fetch_extended_album_metadata", label: "Fetch Extended Album Metadata", type: "switch", description: "Scrape edition labels, UPC, and liner note details." },
+                { key: "fetch_audio_features", label: "Fetch Audio Features", type: "switch", description: "Retrieve musical key signature, BPM, and acoustic metrics." },
+                { key: "fetch_track_credits", label: "Fetch Track Credits", type: "switch", description: "Enrich files with composers, writers, and producers." },
+              ].map(renderInput)}
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              ID3 Container Standard Text Fields
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {[
+                { key: "embed_name", label: "Track Name (TIT2)", type: "switch" },
+                { key: "embed_artist", label: "Artist (TPE1)", type: "switch" },
+                { key: "embed_album", label: "Album (TALB)", type: "switch" },
+                { key: "embed_albumartist", label: "Album Artist (TPE2)", type: "switch" },
+                { key: "embed_year", label: "Release Year & Date", type: "switch" },
+                { key: "embed_genre", label: "Genre (TCON)", type: "switch" },
+                { key: "embed_tracknumber", label: "Track Number (TRCK)", type: "switch" },
+                { key: "embed_discnumber", label: "Disc Number (TPOS)", type: "switch" },
+                { key: "embed_label", label: "Record Label (TPUB)", type: "switch" },
+                { key: "embed_copyright", label: "Copyright (TCOP)", type: "switch" },
+                { key: "embed_description", label: "Track Description (COMM)", type: "switch" },
+                { key: "embed_language", label: "Language (TLAN)", type: "switch" },
+                { key: "embed_isrc", label: "ISRC Code (TSRC)", type: "switch" },
+                { key: "embed_length", label: "Track Length (TLEN)", type: "switch" },
+                { key: "embed_url", label: "Source URL (WOAS)", type: "switch" },
+                { key: "embed_key", label: "Musical Key (TKEY)", type: "switch" },
+                { key: "embed_bpm", label: "Tempo / BPM (TBPM)", type: "switch" },
+                { key: "embed_compilation", label: "Compilation Flag (TCMP)", type: "switch" },
+                { key: "embed_upc", label: "Barcode / UPC Tag", type: "switch" },
+                { key: "embed_service_id", label: "Service Identifier (UFID)", type: "switch" },
+              ].map(renderInput)}
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              Credits &amp; Production Personnel
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {[
+                { key: "embed_composer", label: "Composer (TCOM)", type: "switch" },
+                { key: "embed_writers", label: "Songwriters (TEXT)", type: "switch" },
+                { key: "embed_producers", label: "Producers (TIPL/IPLS)", type: "switch" },
+                { key: "embed_performers", label: "Performers & Musicians", type: "switch" },
+              ].map(renderInput)}
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              Artwork, Lyrics &amp; Branding Embedding
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {[
+                { key: "embed_cover", label: "Embed Album Artwork (APIC)", type: "switch", description: "Embed artwork into the file's metadata block." },
+                { key: "embed_lyrics", label: "Embed Lyrics (USLT / SYLT)", type: "switch", description: "Write lyric frames directly into audio headers." },
+                { key: "embed_explicit", label: "Embed Explicit Content Advisory", type: "switch", description: "Write parental advisory classification tags." },
+                { key: "embed_branding", label: "Embed OnTheSpot Branding Marker", type: "switch", description: "Append 'Downloaded with OnTheSpot' in comments." },
+              ].map(renderInput)}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 5. SERVICES & AUTH                                                        */}
+      {/* ========================================================================= */}
+      {activeTab === "integrations" && (
+        <div className="space-y-4" id="settings-tab-integrations">
+          <Card padding={4} elevation="low">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-neutral-500" />
+                <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                  Spotify Web API &amp; Connect
+                </h3>
+              </div>
+              {config.spotify_webapi_override_client_secret_configured && (
+                <Badge variant="success" label="Custom API Secret Configured" />
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[
+                { key: "spotify_webapi_override_client_id", label: "Spotify Override Client ID", type: "text", placeholder: "Leave blank for built-in client ID" },
+                { key: "spotify_webapi_override_client_secret", label: "Spotify Override Client Secret", type: "password", placeholder: "••••••••••••••••" },
+                { key: "spotify_connect_port", label: "Spotify Connect Daemon Port", type: "number", min: 1024, max: 65535, defaultValue: 5030, description: "Local receiver port for Spotify Connect." },
+              ].map(renderInput)}
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <div className="flex items-center gap-2 mb-4">
+              <Key className="w-4 h-4 text-neutral-500" />
+              <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                YouTube Authentication &amp; Cookies
+              </h3>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {[
+                {
+                  key: "youtube_auth_mode",
+                  label: "YouTube Auth Mode",
+                  type: "select",
+                  defaultValue: "none",
+                  options: [
+                    { value: "none", label: "Disabled (Anonymous)" },
+                    { value: "browser", label: "Load Cookies from Browser" },
+                    { value: "cookie_file", label: "Cookie Jar File" },
+                  ],
+                },
+                { key: "youtube_cookies_browser", label: "Target Browser for Cookies", type: "text", placeholder: "chrome" },
+                { key: "youtube_cookies_file", label: "Cookies File Location", type: "text", placeholder: "/path/to/cookies.txt" },
+              ].map(renderInput)}
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              WebUI Security &amp; Credentials
+            </h3>
+
+            <div className="space-y-4">
+              {renderInput({
+                key: "use_webui_login",
+                label: "Enforce WebUI Login Authentication",
+                type: "switch",
+                description: "Require credentials to access OnTheSpot web endpoints.",
+              })}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[
+                  { key: "webui_username", label: "WebUI Username", type: "text", placeholder: "admin" },
+                  { key: "webui_password", label: "WebUI Password", type: "password", placeholder: "Set password" },
+                ].map(renderInput)}
+              </div>
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              API In-Memory Caching &amp; Expiration TTLs
+            </h3>
+
+            <div className="space-y-4">
+              {renderInput({
+                key: "cache_api_calls",
+                label: "Cache API Calls in Memory",
+                type: "switch",
+                description: "Store responses in local memory to prevent duplicate requests.",
+              })}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {[
+                  { key: "api_response_cache_ttl_seconds", label: "General API Cache TTL (s)", type: "number", min: 0, defaultValue: 3600 },
+                  { key: "spotify_metadata_cache_ttl_seconds", label: "Spotify Metadata Cache TTL (s)", type: "number", min: 0, defaultValue: 86400 },
+                  { key: "spotify_search_cache_ttl_seconds", label: "Spotify Search Cache TTL (s)", type: "number", min: 0, defaultValue: 3600 },
+                  { key: "playlist_automation_cache_ttl_seconds", label: "Playlist Auto Cache TTL (s)", type: "number", min: 0, defaultValue: 7200 },
+                ].map(renderInput)}
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 6. DOWNLOAD PROFILES                                                      */}
+      {/* ========================================================================= */}
       {activeTab === "profiles" && (
         <div className="space-y-4" id="settings-tab-profiles">
           <Card padding={4} elevation="low">
@@ -611,42 +840,39 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   </h3>
                 </div>
                 <p className="text-xs text-neutral-500 mt-0.5">
-                  Select which quality profile is applied by default when queuing new items
+                  Select which quality preset is applied by default when enqueuing new items.
                 </p>
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {profiles.map((prof) => {
-                const isActive = prof.id === (config.active_download_profile || activeProfile);
+              {(profiles || config.download_profiles || []).map((prof) => {
+                const isCurrentActive =
+                  prof.id === (config.active_download_profile || activeProfile);
                 return (
-                  <Card
-                    key={prof.id}
-                    padding={4}
-                    elevation="low"
-                    id={`profile-card-${prof.id}`}
-                  >
+                  <Card key={prof.id} padding={4} elevation="low" id={`profile-card-${prof.id}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <div className="flex items-center gap-2">
                           <h4 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
                             {prof.name}
                           </h4>
-                          {isActive && (
-                            <Badge variant="success" label="Active Default" />
-                          )}
+                          {isCurrentActive && <Badge variant="success" label="Active Default" />}
                         </div>
                         <p className="text-xs font-mono text-neutral-500 mt-1">
                           Format: {prof.format} • Bitrate: {prof.bitrate}
                         </p>
                       </div>
 
-                      {!isActive && (
+                      {!isCurrentActive && (
                         <Button
                           variant="secondary"
                           size="sm"
                           label="Set Default"
-                          onClick={() => onActivateProfile(prof.id)}
+                          onClick={() => {
+                            onUpdateValue("active_download_profile", prof.id);
+                            onActivateProfile(prof.id);
+                          }}
                         />
                       )}
                     </div>
@@ -658,160 +884,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         </div>
       )}
 
-      {/* 4. ID3 Tagging & Metadata */}
-      {activeTab === "metadata" && (
-        <div className="space-y-4" id="settings-tab-metadata">
-          <Card padding={4} elevation="low">
-            <div className="flex items-center gap-2 mb-4">
-              <Tag className="w-4 h-4 text-neutral-500" />
-              <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-                ID3 Tag Embedding &amp; Lyrics
-              </h3>
-            </div>
-
-            <div className="space-y-6">
-              <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-3">
-                  ID3 Container Text Fields
-                </h4>
-
-                <div className="divide-y divide-neutral-100 dark:divide-neutral-800/60 space-y-4">
-                  <div className="pt-2 first:pt-0">
-                    <Switch
-                      label="Embed Track Title"
-                      description="Write the title metadata parameter into target media headers."
-                      value={Boolean(config.embed_name)}
-                      onChange={(checked) => onUpdateValue("embed_name", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
-
-                  <div className="pt-4">
-                    <Switch
-                      label="Embed Artist Tag"
-                      description="Write the primary artist name/creator parameter to the ID3 block."
-                      value={Boolean(config.embed_artist)}
-                      onChange={(checked) => onUpdateValue("embed_artist", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
-
-                  <div className="pt-4">
-                    <Switch
-                      label="Embed Album Tag"
-                      description="Write track's parent album or collection title to the ID3 container."
-                      value={Boolean(config.embed_album)}
-                      onChange={(checked) => onUpdateValue("embed_album", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
-
-                  <div className="pt-4">
-                    <Switch
-                      label="Embed Album Artist Tag"
-                      description="Write the primary artist of the album block specifically to its dedicated field."
-                      value={Boolean(config.embed_albumartist)}
-                      onChange={(checked) => onUpdateValue("embed_albumartist", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
-
-                  <div className="pt-4">
-                    <Switch
-                      label="Embed Genre Tags"
-                      description="Lookup and fetch genre categorizations from databases and inject metadata tags."
-                      value={Boolean(config.embed_genre)}
-                      onChange={(checked) => onUpdateValue("embed_genre", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
-
-                  <div className="pt-4">
-                    <Switch
-                      label="Embed Release Year &amp; Date"
-                      description="Write release year, month, and full date identifiers to headers."
-                      value={Boolean(config.embed_year)}
-                      onChange={(checked) => onUpdateValue("embed_year", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="border-t border-neutral-200 dark:border-neutral-800 pt-5">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-3">
-                  Rich Elements &amp; Lyrics Tagging
-                </h4>
-
-                <div className="divide-y divide-neutral-100 dark:divide-neutral-800/60 space-y-4">
-                  <div className="pt-2 first:pt-0">
-                    <Switch
-                      label="Embed Album Artwork"
-                      description="Embed high-resolution artwork directly into the file's ID3 / FLAC metadata blocks."
-                      value={Boolean(config.embed_cover)}
-                      onChange={(checked) => onUpdateValue("embed_cover", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
-
-                  <div className="pt-4">
-                    <Switch
-                      label="Download Synced Lyrics (.lrc)"
-                      description="Fetch synchronized subtitle-style lyric files and store them alongside output tracks."
-                      value={Boolean(config.save_lrc_file)}
-                      onChange={(checked) => onUpdateValue("save_lrc_file", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
-
-                  <div className="pt-4">
-                    <Switch
-                      label="Embed Lyrics in Audio File"
-                      description="Embed lyric text lines into USLT or SYLT metadata frames of the audio file."
-                      value={Boolean(config.embed_lyrics)}
-                      onChange={(checked) => onUpdateValue("embed_lyrics", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
-
-                  <div className="pt-4">
-                    <Switch
-                      label="Embed Explicit Content Advisory"
-                      description="Insert parental advisory classification tags to identify explicit lyrics."
-                      value={Boolean(config.embed_explicit)}
-                      onChange={(checked) => onUpdateValue("embed_explicit", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
-
-                  <div className="pt-4">
-                    <Switch
-                      label="Embed Branding Comments"
-                      description="Inject 'Downloaded with OnTheSpot' brand comment markers inside container structures."
-                      value={Boolean(config.embed_branding)}
-                      onChange={(checked) => onUpdateValue("embed_branding", checked)}
-                      labelPosition="start"
-                      labelSpacing="spread"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {/* 5. Backend Connection */}
+      {/* ========================================================================= */}
+      {/* 7. BACKEND & SYSTEM STATS                                                 */}
+      {/* ========================================================================= */}
       {activeTab === "backend" && (
         <div className="space-y-4" id="settings-tab-backend">
           <Card padding={4} elevation="low">
@@ -849,7 +924,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   />
                 </div>
                 <p className="text-[11px] text-neutral-500 mt-1">
-                  Point this UI to your local or remote OnTheSpot daemon. If unreachable, the UI falls back to simulated offline state.
+                  Point this client UI to your local or remote OnTheSpot daemon instance.
                 </p>
               </div>
 
@@ -868,10 +943,46 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   <span>
                     {connStatus === "connected"
                       ? `Successfully connected to FastAPI daemon at ${localBackendUrl}`
-                      : `Could not reach ${localBackendUrl}. Using local mock state.`}
+                      : `Could not reach ${localBackendUrl}.`}
                   </span>
                 </div>
               )}
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-3">
+              Runtime Diagnostics &amp; Statistics
+            </h3>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/40 border border-neutral-200/60 dark:border-neutral-800">
+                <span className="block text-[11px] font-medium text-neutral-500">Daemon Version</span>
+                <span className="text-sm font-bold text-neutral-900 dark:text-neutral-100">
+                  {config.version || "Unknown"}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/40 border border-neutral-200/60 dark:border-neutral-800">
+                <span className="block text-[11px] font-medium text-neutral-500">Total Items Downloaded</span>
+                <span className="text-sm font-bold text-neutral-900 dark:text-neutral-100">
+                  {(config.total_downloaded_items ?? 0).toLocaleString()}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/40 border border-neutral-200/60 dark:border-neutral-800">
+                <span className="block text-[11px] font-medium text-neutral-500">Total Data Downloaded</span>
+                <span className="text-sm font-bold text-neutral-900 dark:text-neutral-100">
+                  {formatBytes(config.total_downloaded_data ?? 0)}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/40 border border-neutral-200/60 dark:border-neutral-800">
+                <span className="block text-[11px] font-medium text-neutral-500">Authenticated Accounts</span>
+                <span className="text-sm font-bold text-neutral-900 dark:text-neutral-100">
+                  {config.accounts?.length ?? 0}
+                </span>
+              </div>
             </div>
           </Card>
         </div>

@@ -106,12 +106,14 @@ export async function fetchOTSConfig(): Promise<OTSConfig> {
   return await res.json();
 }
 
-export async function saveOTSConfig(config: Partial<OTSConfig>): Promise<boolean> {
-  const res = await request("/config/set", {
-    method: "POST",
-    body: JSON.stringify(config),
-  });
-  return res.ok;
+export async function saveOTSConfig(): Promise<boolean> {
+  try {
+    const res = await request("/config/save", { method: "POST" });
+    return res.ok;
+  } catch (err) {
+    console.error("Save config failed:", err);
+    return false;
+  }
 }
 
 export async function resetOTSConfig(): Promise<OTSConfig> {
@@ -119,7 +121,34 @@ export async function resetOTSConfig(): Promise<OTSConfig> {
   if (!res.ok) throw new Error("Failed to reset configuration");
   return await res.json();
 }
+export async function updateOTSConfigValue<K extends keyof OTSConfig>(
+  key: K,
+  value: OTSConfig[K]
+): Promise<boolean> {
+  const payload = {
+    [key]: value,
+  };
 
+  const response = await request(`/config/set`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    console.error(
+      errorData.detail 
+        ? (typeof errorData.detail === "string" ? errorData.detail : JSON.stringify(errorData.detail))
+        : `Failed to update setting '${String(key)}' (Status ${response.status})`
+    );
+    return false
+  } else {
+    return response.ok
+  }
+}
 
 export async function fetchDownloadQueue(): Promise<DownloadQueueItem[]> {
   const res = await request("/queue/downloads");
