@@ -268,13 +268,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 { key: "maximum_queue_workers", label: "Queue Polling Workers", type: "number", min: 1, max: 16, defaultValue: 4, description: "Tracks parsing and catalog gathering threads." },
                 { key: "download_delay", label: "Download Delay (Seconds)", type: "number", step: "0.1", min: 0, isFloat: true, defaultValue: 1.5, description: "Simulates organic playback requests." },
                 { key: "download_delay_variance", label: "Delay Variance (Seconds)", type: "number", step: "0.1", min: 0, isFloat: true, defaultValue: 0.5, description: "Random jitter window (± seconds)." },
-                { key: "download_chunk_size", label: "Download Chunk Size (Bytes)", type: "number", min: 1024, step: 1024, defaultValue: 1048576, description: "Direct stream buffer chunk size." },
                 { key: "api_request_delay", label: "API Request Delay (Seconds)", type: "number", step: "0.05", min: 0, isFloat: true, defaultValue: 0, description: "Pacing interval between catalog queries." },
                 { key: "api_retry_max_attempts", label: "API Retry Max Attempts", type: "number", min: 1, max: 20, defaultValue: 3 },
                 { key: "api_retry_base_delay", label: "API Retry Base Delay (Seconds)", type: "number", step: "0.5", min: 0, isFloat: true, defaultValue: 1 },
                 { key: "api_retry_max_delay", label: "API Retry Max Delay (Seconds)", type: "number", step: 1, min: 1, defaultValue: 30 },
                 { key: "retry_worker_delay", label: "Retry Worker Delay (Seconds)", type: "number", min: 1, max: 300, defaultValue: 5 },
-                { key: "active_account_number", label: "Active Account Index", type: "number", min: 0, defaultValue: 0 },
               ].map(renderInput)}
             </div>
 
@@ -304,18 +302,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     { value: "light", label: "Light Mode" },
                   ],
                 },
-                { key: "language", label: "Language Code", type: "text", placeholder: "en" },
-                { key: "language_index", label: "Language Index", type: "number", min: 0, defaultValue: 0 },
-                { key: "update_repository", label: "Update Repository URL", type: "text", placeholder: "https://github.com/..." },
-                { key: "update_check_interval_hours", label: "Update Check Interval (Hours)", type: "number", min: 1, defaultValue: 24 },
               ].map(renderInput)}
             </div>
 
             <div className="mt-5 pt-4 border-t border-neutral-200 dark:border-neutral-800 space-y-2">
               {[
                 { key: "check_for_updates", label: "Check for Updates Automatically", type: "switch", description: "Query the release repository on launch and intervals." },
-                { key: "close_to_tray", label: "Close to System Tray", type: "switch", description: "Keep running in background tray when closing the window." },
-                { key: "mirror_spotify_playback", label: "Mirror Spotify Playback", type: "switch", description: "Synchronize download queue to currently playing Spotify sessions." },
                 { key: "windows_10_explorer_thumbnails", label: "Windows 10 Explorer Thumbnail Support", type: "switch", description: "Format cover streams for standard Explorer folder caching." },
                 { key: "debug_mode", label: "Debug Logging Mode", type: "switch", description: "Output verbose internal states and network request traces." },
               ].map(renderInput)}
@@ -327,18 +319,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               UI Controls & Queue Item Action Buttons
             </h3>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              {renderInput({
-                key: "thumbnail_size",
-                label: "Thumbnail Render Size (Pixels)",
-                type: "number",
-                min: 32,
-                max: 512,
-                step: 16,
-                defaultValue: 64,
-              })}
-            </div>
-
             <div className="space-y-2">
               {[
                 { key: "show_search_thumbnails", label: "Show Search Thumbnails", type: "switch", description: "Display album artwork beside catalog search results." },
@@ -347,34 +327,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               ].map(renderInput)}
             </div>
 
-            <div className="mt-5 pt-4 border-t border-neutral-200 dark:border-neutral-800">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-3">
-                Visible Item Buttons on Queue Cards
-              </h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {[
-                  { key: "download_copy_btn", label: "Copy URL", type: "switch" },
-                  { key: "download_open_btn", label: "Open File", type: "switch" },
-                  { key: "download_locate_btn", label: "Locate Folder", type: "switch" },
-                  { key: "download_delete_btn", label: "Delete Item", type: "switch" },
-                ].map(renderInput)}
-              </div>
-            </div>
-
-            <div className="mt-5 pt-4 border-t border-neutral-200 dark:border-neutral-800">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-3">
-                Download Queue Status Visibility Filters
-              </h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {[
-                  { key: "download_queue_show_waiting", label: "Show Waiting Items", type: "switch" },
-                  { key: "download_queue_show_failed", label: "Show Failed Items", type: "switch" },
-                  { key: "download_queue_show_cancelled", label: "Show Cancelled Items", type: "switch" },
-                  { key: "download_queue_show_unavailable", label: "Show Unavailable Items", type: "switch" },
-                  { key: "download_queue_show_completed", label: "Show Completed Items", type: "switch" },
-                ].map(renderInput)}
-              </div>
-            </div>
           </Card>
 
           <Card padding={4} elevation="low">
@@ -406,20 +358,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   ].map(renderInput)}
                 </div>
               </div>
-
-              <div className="pt-3 border-t border-neutral-200 dark:border-neutral-800">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-2">
-                  Fast Filter Quick-Toggles (f_search)
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {[
-                    { key: "f_search_tracks", label: "Fast Filter Tracks", type: "switch" },
-                    { key: "f_search_albums", label: "Fast Filter Albums", type: "switch" },
-                    { key: "f_search_artists", label: "Fast Filter Artists", type: "switch" },
-                    { key: "f_search_playlists", label: "Fast Filter Playlists", type: "switch" },
-                  ].map(renderInput)}
-                </div>
-              </div>
             </div>
           </Card>
         </div>
@@ -442,8 +380,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {[
                   { key: "audio_download_path", label: "Audio Download Path", type: "text", placeholder: "/music/OnTheSpot", description: "Primary directory." },
-                  { key: "export_folder_path", label: "Export Folder Path", type: "text", description: "Conversion export folder." },
-                  { key: "playlist_backup_folder_path", label: "Playlist Backup Folder", type: "text", description: "Folder for playlist backups." },
                 ].map(renderInput)}
               </div>
 
@@ -454,7 +390,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[
-                  { key: "podcast_path_formatter", label: "Podcast Path Formatter", type: "text" },
+                  { key: "podcast_path_formatter", label: "Podcast Path Formatter", type: "text", description: "Target folder for podcasts" },
                   { key: "podcast_file_format", label: "Podcast File Format", type: "text", description: "Target container for voice episodes." },
                 ].map(renderInput)}
               </div>
@@ -515,8 +451,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
             <div className="space-y-2">
               {[
-                { key: "use_custom_file_bitrate", label: "Apply Custom Conversion Bitrate", type: "switch", description: "Re-encode items using specified bitrate boundaries." },
-                { key: "raw_media_download", label: "Raw Media Download", type: "switch", description: "Write directly streamed chunks to disk without decoding." },
+                { key: "use_source_format", label: "Use source format", type: "switch", description: "Use the same format of the download file for saved files (override profiles!)" },
+                { key: "prefer_best_source_format", label: "Raw Media Download", type: "switch", description: "Always prefer the best source format for download" },
+                { key: "raw_media_download", label: "Raw Media Download", type: "switch", description: "Write directly streamed chunks to disk without decoding. (override profiles!)" },
                 { key: "save_album_cover", label: "Save Separate Album Artwork Image", type: "switch", description: "Save folder.jpg or cover.jpg alongside audio tracks." },
                 { key: "download_lyrics", label: "Download Lyrics", type: "switch", description: "Retrieve track lyrics from catalog providers." },
                 { key: "save_lrc_file", label: "Save .LRC Lyrics Files", type: "switch", description: "Save synchronized lyric files alongside audio tracks." },
@@ -647,7 +584,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
           <Card padding={4} elevation="low">
             <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
-              Extended Catalog Scraping
+              Spotify Specific Catalog Scraping (Needs WebAPI Keys)
             </h3>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -743,59 +680,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {[
-                { key: "spotify_webapi_override_client_id", label: "Spotify Override Client ID", type: "text", placeholder: "Leave blank for built-in client ID" },
-                { key: "spotify_webapi_override_client_secret", label: "Spotify Override Client Secret", type: "password", placeholder: "••••••••••••••••" },
-                { key: "spotify_connect_port", label: "Spotify Connect Daemon Port", type: "number", min: 1024, max: 65535, defaultValue: 5030, description: "Local receiver port for Spotify Connect." },
+                { key: "spotify_webapi_override_client_id", label: "Spotify Override Client ID", type: "text", placeholder: "Your client ID" },
+                { key: "spotify_webapi_override_client_secret", label: "Spotify Override Client Secret", type: "text", placeholder: "Your Client Secret" },
               ].map(renderInput)}
-            </div>
-          </Card>
-
-          <Card padding={4} elevation="low">
-            <div className="flex items-center gap-2 mb-4">
-              <Key className="w-4 h-4 text-neutral-500" />
-              <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-                YouTube Authentication &amp; Cookies
-              </h3>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {[
-                {
-                  key: "youtube_auth_mode",
-                  label: "YouTube Auth Mode",
-                  type: "select",
-                  defaultValue: "none",
-                  options: [
-                    { value: "none", label: "Disabled (Anonymous)" },
-                    { value: "browser", label: "Load Cookies from Browser" },
-                    { value: "cookie_file", label: "Cookie Jar File" },
-                  ],
-                },
-                { key: "youtube_cookies_browser", label: "Target Browser for Cookies", type: "text", placeholder: "chrome" },
-                { key: "youtube_cookies_file", label: "Cookies File Location", type: "text", placeholder: "/path/to/cookies.txt" },
-              ].map(renderInput)}
-            </div>
-          </Card>
-
-          <Card padding={4} elevation="low">
-            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
-              WebUI Security &amp; Credentials
-            </h3>
-
-            <div className="space-y-4">
-              {renderInput({
-                key: "use_webui_login",
-                label: "Enforce WebUI Login Authentication",
-                type: "switch",
-                description: "Require credentials to access OnTheSpot web endpoints.",
-              })}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {[
-                  { key: "webui_username", label: "WebUI Username", type: "text", placeholder: "admin" },
-                  { key: "webui_password", label: "WebUI Password", type: "password", placeholder: "Set password" },
-                ].map(renderInput)}
-              </div>
             </div>
           </Card>
 

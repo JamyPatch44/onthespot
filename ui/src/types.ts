@@ -96,6 +96,8 @@ export interface OTSConfig {
   album_cover_format: string;
   file_hertz: number;
   use_custom_file_bitrate: boolean;
+  use_source_format: boolean,
+  prefer_best_source_format: boolean,
   download_lyrics: boolean;
   only_download_synced_lyrics: boolean;
   only_download_plain_lyrics: boolean;
