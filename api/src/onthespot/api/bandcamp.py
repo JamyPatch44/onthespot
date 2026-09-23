@@ -1,18 +1,18 @@
-from html import unescape
 import json
 import re
-import requests
+from html import unescape
 from urllib.request import Request, urlopen
+
+import requests
+
 from ..constants import HTTP_TIMEOUT
 from ..otsconfig import config
-from ..runtimedata import get_logger, account_pool
+from ..runtimedata import account_pool, get_logger
 from ..utils import conv_list_format, make_call
 
 logger = get_logger("api.bandcamp")
 
-_BANDCAMP_SEARCH_URL = (
-    "https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic"
-)
+_BANDCAMP_SEARCH_URL = "https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic"
 _BANDCAMP_SEARCH_TYPES = {
     "track": ("t", "track"),
     "album": ("a", "album"),
@@ -125,9 +125,7 @@ def bandcamp_get_search_results(_, search_term, content_types):
         for result in results[:max_results]:
             if result.get("type") != search_filter:
                 continue
-            item_url = str(
-                result.get("item_url_path") or result.get("item_url_root") or ""
-            ).split("?")[0]
+            item_url = str(result.get("item_url_path") or result.get("item_url_root") or "").split("?")[0]
             item_id = str(result.get("id") or item_url)
             title = str(result.get("name") or "").strip()
             if not item_id or not item_url or not title:
@@ -167,7 +165,7 @@ def bandcamp_get_album_track_ids(_, url):
         return item_ids
 
 
-def bandcamp_get_track_metadata(_, url):
+def bandcamp_get_track_metadata(_, url, item):
     track_webpage = make_call(url, text=True, use_ssl=True)
     track_data = {}
     matches = re.findall(r'data-(\w+)="(.*?)"', track_webpage)
@@ -205,36 +203,23 @@ def bandcamp_get_track_metadata(_, url):
     info["artists"] = track_data.get("embed", {}).get("artist")
     info["album_artists"] = track_data.get("embed", {}).get("artist")
     info["item_url"] = track_data.get("embed", {}).get("linkback")
-    info["album_name"] = (
-        track_data.get("embed", {}).get("album_embed_data", {}).get("album_title")
-    )
+    info["album_name"] = track_data.get("embed", {}).get("album_embed_data", {}).get("album_title")
     info["release_year"] = year
-    info["track_number"] = (
-        track_data.get("tralbum", {}).get("current", {}).get("track_number")
-    )
+    info["track_number"] = track_data.get("tralbum", {}).get("current", {}).get("track_number")
     isrc = track_data.get("tralbum", {}).get("current", {}).get("isrc")
     info["isrc"] = isrc if isrc else ""
     info["is_playable"] = True
     try:
-        info["file_url"] = (
-            track_data.get("tralbum", {})
-            .get("trackinfo", [{}])[0]
-            .get("file", {})
-            .get("mp3-128")
-        )
+        info["file_url"] = track_data.get("tralbum", {}).get("trackinfo", [{}])[0].get("file", {}).get("mp3-128")
     except AttributeError:
         info["is_playable"] = False
     info["item_id"] = track_data.get("tralbum", {}).get("current", {}).get("id")
     lyrics = track_data.get("tralbum", {}).get("current", {}).get("lyrics")
-    info["lyrics"] = (
-        lyrics if lyrics and not config.get("only_download_synced_lyrics") else ""
-    )
+    info["lyrics"] = lyrics if lyrics and not config.get("only_download_synced_lyrics") else ""
     info["image_url"] = thumbnail_url
 
     try:
-        album_webpage = make_call(
-            track_data["embed"]["album_embed_data"]["linkback"], text=True, use_ssl=True
-        )
+        album_webpage = make_call(track_data["embed"]["album_embed_data"]["linkback"], text=True, use_ssl=True)
         matches = re.findall(
             r'<script type="application/ld\+json">\s*(\{.*?\})\s*</script>',
             album_webpage,
@@ -242,9 +227,7 @@ def bandcamp_get_track_metadata(_, url):
         )
         for match in matches:
             json_data_str = match
-            json_data_str = re.sub(
-                r",\s*}", "}", json_data_str
-            )  # Remove trailing commas
+            json_data_str = re.sub(r",\s*}", "}", json_data_str)  # Remove trailing commas
             album_data = json.loads(json_data_str)
         info["total_tracks"] = album_data.get("numTracks")
         info["description"] = album_data.get("description")

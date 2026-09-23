@@ -106,21 +106,6 @@ wheels = [
 ]
 
 [[package]]
-name = "companion"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "librespot" },
-    { name = "requests" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "librespot", git = "https://github.com/ots-downloader/librespot-python.git" },
-    { name = "requests", specifier = ">=2.34.2" },
-]
-
-[[package]]
 name = "defusedxml"
 version = "0.7.1"
 source = { registry = "https://pypi.org/simple" }
@@ -159,6 +144,21 @@ dependencies = [
     { name = "requests" },
     { name = "websocket-client" },
     { name = "zeroconf" },
+]
+
+[[package]]
+name = "ots-companion"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "librespot" },
+    { name = "requests" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "librespot", git = "https://github.com/ots-downloader/librespot-python.git" },
+    { name = "requests", specifier = ">=2.34.2" },
 ]
 
 [[package]]

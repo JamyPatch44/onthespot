@@ -1,11 +1,13 @@
-import re
-import requests
 import json
+import re
 from uuid import uuid4
+
+import requests
+
 from ..constants import HTTP_TIMEOUT
 from ..otsconfig import config
-from ..runtimedata import get_logger, account_pool
-from ..utils import make_call, conv_list_format
+from ..runtimedata import account_pool, get_logger
+from ..utils import conv_list_format, make_call
 
 logger = get_logger("api.soundcloud")
 BASE_URL = "https://api-v2.soundcloud.com"
@@ -34,9 +36,7 @@ def soundcloud_parse_url(url, token):
 def soundcloud_login_user(account):
     logger.info("Logging into Soundcloud account...")
     try:
-        page_text = requests.get(
-            "https://soundcloud.com", timeout=HTTP_TIMEOUT
-        ).text
+        page_text = requests.get("https://soundcloud.com", timeout=HTTP_TIMEOUT).text
 
         app_version_match = re.search(
             r'<script>window\.__sc_version="(\d+)"</script>',
@@ -50,9 +50,7 @@ def soundcloud_login_user(account):
         )
         *_, client_id_url_match = client_id_url_match
         client_id_url = client_id_url_match.group(1)
-        client_id_page_text = requests.get(
-            client_id_url, timeout=HTTP_TIMEOUT
-        ).text
+        client_id_page_text = requests.get(client_id_url, timeout=HTTP_TIMEOUT).text
         client_id_match = re.search(r'client_id:\s*"(\w+)"', client_id_page_text)
         client_id = client_id_match.group(1)
 
@@ -256,9 +254,7 @@ def soundcloud_get_artist_album_ids(token, item_id):
     params["app_locale"] = token["app_locale"]
     params["limit"] = 10000
 
-    artist_data = make_call(
-        f"{BASE_URL}/users/{item_id}/albums", headers=headers, params=params
-    )
+    artist_data = make_call(f"{BASE_URL}/users/{item_id}/albums", headers=headers, params=params)
 
     album_ids = []
     for album in artist_data.get("collection", []):
@@ -274,9 +270,7 @@ def soundcloud_get_album_track_ids(token, item_id):
     params["app_locale"] = token["app_locale"]
     params["limit"] = 10000
 
-    album_data = make_call(
-        f"{BASE_URL}/playlists/{item_id}", headers=headers, params=params
-    )
+    album_data = make_call(f"{BASE_URL}/playlists/{item_id}", headers=headers, params=params)
 
     track_ids = []
     for track in album_data.get("tracks", []):
@@ -292,9 +286,7 @@ def soundcloud_get_playlist_data(token, item_id):
     params["app_locale"] = token["app_locale"]
     params["limit"] = 10000
 
-    playlist_data = make_call(
-        f"{BASE_URL}/playlists/{item_id}", headers=headers, params=params
-    )
+    playlist_data = make_call(f"{BASE_URL}/playlists/{item_id}", headers=headers, params=params)
 
     playlist_name = playlist_data.get("title", "")
     playlist_by = playlist_data.get("user", {}).get("username")
@@ -305,15 +297,13 @@ def soundcloud_get_playlist_data(token, item_id):
     return playlist_name, playlist_by, track_ids
 
 
-def soundcloud_get_track_metadata(token, item_id):
+def soundcloud_get_track_metadata(token, item_id, item):
     params = {}
     params["client_id"] = token["client_id"]
     params["app_version"] = token["app_version"]
     params["app_locale"] = token["app_locale"]
 
-    track_data = make_call(
-        f"{BASE_URL}/tracks/{item_id}", headers=headers, params=params
-    )
+    track_data = make_call(f"{BASE_URL}/tracks/{item_id}", headers=headers, params=params)
     # Some tracks fail with a drm error, disabling this in favour of yt-dlp's file parser
     # track_file = requests.get(track_data["media"]["transcodings"][0]["url"], headers=headers, params=params).json()
     track_webpage = make_call(f"{track_data.get('permalink_url')}/albums", text=True)
@@ -371,9 +361,7 @@ def soundcloud_get_track_metadata(token, item_id):
         publisher_metadata = track_data.get("publisher_metadata", {})
         explicit = publisher_metadata.get("explicit")
         if publisher_metadata.get("c_line"):
-            copyright_list = [
-                item.strip() for item in publisher_metadata.get("c_line").split(",")
-            ]
+            copyright_list = [item.strip() for item in publisher_metadata.get("c_line").split(",")]
     except Exception:
         pass
     copyright_data = conv_list_format(copyright_list)
@@ -405,17 +393,13 @@ def soundcloud_get_track_metadata(token, item_id):
 
     release_date = track_data.get("release_date")
     last_modified = track_data.get("last_modified")
-    info["release_year"] = (
-        release_date.split("-")[0] if release_date else last_modified.split("-")[0]
-    )
+    info["release_year"] = release_date.split("-")[0] if release_date else last_modified.split("-")[0]
 
     info["title"] = track_data.get("title")
     info["track_number"] = track_number
     info["total_tracks"] = total_tracks
     # info['file_url'] = track_file.get("url")
-    info["length"] = str(
-        track_data.get("media", {}).get("transcodings", [{}])[0].get("duration", 0)
-    )
+    info["length"] = str(track_data.get("media", {}).get("transcodings", [{}])[0].get("duration", 0))
     info["artists"] = artists
     info["album_name"] = album_name
     info["album_type"] = album_type

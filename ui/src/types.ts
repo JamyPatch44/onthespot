@@ -1,130 +1,3 @@
-export type ThemePreset =
-  | "spotify"
-  | "midnight"
-  | "forest"
-  | "light"
-  | "ocean"
-  | "sunset"
-  | "violet"
-  | "rose"
-  | "custom";
-
-export type ThemeMode = "light" | "dark";
-
-export interface CustomThemePalette {
-  background: string;
-  surface: string;
-  elevated: string;
-  accent: string;
-  text: string;
-  muted: string;
-}
-
-export interface CustomTheme {
-  mode: ThemeMode;
-  dark: CustomThemePalette;
-  light: CustomThemePalette;
-}
-
-export interface SavedCustomTheme {
-  id: string;
-  name: string;
-  theme: CustomTheme;
-  updatedAt: number;
-}
-
-export const DEFAULT_CUSTOM_THEME: CustomTheme = {
-  mode: "dark",
-  dark: {
-    background: "#121212",
-    surface: "#222222",
-    elevated: "#292929",
-    accent: "#1ed760",
-    text: "#f5f5f5",
-    muted: "#b3b3b3",
-  },
-  light: {
-    background: "#f5f5f5",
-    surface: "#ffffff",
-    elevated: "#eeeeee",
-    accent: "#158642",
-    text: "#181818",
-    muted: "#6f6f6f",
-  },
-};
-
-export const THEME_PRESETS: ReadonlyArray<{
-  id: ThemePreset;
-  label: string;
-  description: string;
-  mode: "light" | "dark";
-  swatches: readonly [string, string, string];
-}> = [
-  {
-    id: "spotify",
-    label: "Spotify dark",
-    description: "Charcoal surfaces with the classic green accent.",
-    mode: "dark",
-    swatches: ["#121212", "#147f3e", "#f5f5f5"],
-  },
-  {
-    id: "midnight",
-    label: "Midnight blue",
-    description: "A cooler, low-light palette with blue highlights.",
-    mode: "dark",
-    swatches: ["#0f111a", "#4d5fb3", "#f4f6ff"],
-  },
-  {
-    id: "forest",
-    label: "Forest",
-    description: "Deep green surfaces with a calm mint accent.",
-    mode: "dark",
-    swatches: ["#111815", "#246b48", "#f3faf5"],
-  },
-  {
-    id: "light",
-    label: "Light",
-    description: "Bright surfaces with high-contrast green controls.",
-    mode: "light",
-    swatches: ["#f5f5f5", "#147f3e", "#181818"],
-  },
-  {
-    id: "ocean",
-    label: "Ocean",
-    description: "Cool blue surfaces with a bright aqua accent.",
-    mode: "dark",
-    swatches: ["#0b1620", "#176a8a", "#eaf7ff"],
-  },
-  {
-    id: "sunset",
-    label: "Sunset",
-    description: "Warm charcoal surfaces with a soft orange accent.",
-    mode: "dark",
-    swatches: ["#1b1210", "#a34b26", "#fff5ed"],
-  },
-  {
-    id: "violet",
-    label: "Violet",
-    description: "Deep purple surfaces with a lavender accent.",
-    mode: "dark",
-    swatches: ["#15111d", "#6a45a6", "#f8f3ff"],
-  },
-  {
-    id: "rose",
-    label: "Rose",
-    description: "Rich berry surfaces with a pink accent.",
-    mode: "dark",
-    swatches: ["#1c1014", "#9f3657", "#fff3f6"],
-  },
-  {
-    id: "custom",
-    label: "Custom",
-    description: "Build your own palette from a few simple color controls.",
-    mode: "dark",
-    swatches: ["#121212", "#1ed760", "#f5f5f5"],
-  },
-];
-
 export interface OTSConfig {
   version: string;
   debug_mode: boolean;
@@ -147,13 +20,7 @@ export interface OTSConfig {
   youtube_auth_mode?: "none" | "browser" | "cookie_file";
   youtube_cookies_browser?: string;
   youtube_cookies_file?: string;
-  download_profiles?: Array<{
-    id: string;
-    name: string;
-    format: string;
-    bitrate: string;
-    download_path: string;
-  }>;
+  download_profiles?: DownloadProfile[];
   explicit_label: string;
   download_copy_btn: boolean;
   download_open_btn: boolean;
@@ -229,6 +96,8 @@ export interface OTSConfig {
   album_cover_format: string;
   file_hertz: number;
   use_custom_file_bitrate: boolean;
+  use_source_format: boolean,
+  prefer_best_source_format: boolean,
   download_lyrics: boolean;
   only_download_synced_lyrics: boolean;
   only_download_plain_lyrics: boolean;
@@ -283,7 +152,6 @@ export interface OTSConfig {
   v2a_preferred_bitrate: number;
   [key: string]: any;
 }
-
 export interface AccountItem {
   uuid: string;
   service: string;
@@ -291,12 +159,24 @@ export interface AccountItem {
   username?: string;
   token?: string;
   login?: Record<string, any>;
+  added_at?: string;
+  status?: "online" | "degraded" | "rate_limited" | "offline";
 }
+
+export type MediaItemType =
+  | "track"
+  | "album"
+  | "playlist"
+  | "artist"
+  | "podcast"
+  | "episode"
+  | "movie"
+  | "show";
 
 export interface SearchResultItem {
   id: string;
   item_service: string;
-  item_type: 'track' | 'album' | 'playlist' | 'artist' | 'podcast' | 'episode' | 'movie' | 'show';
+  item_type: MediaItemType;
   name: string;
   artist: string;
   album?: string;
@@ -304,45 +184,158 @@ export interface SearchResultItem {
   release_year?: number;
   thumbnail?: string;
   url: string;
-  item_url?: string;
-  item_id?: string;
   explicit?: boolean;
   bitrate?: string;
   item_count?: number;
 }
 
-export interface DownloadQueueItem {
-  local_id: string;
-  available: boolean;
-  item_service: string;
-  item_type: string;
-  item_id: string;
-  item_status: 'Waiting' | 'Downloading' | 'Paused' | 'Downloaded' | 'Failed' | 'Cancelled' | 'Unavailable' | 'Already Exists';
-  file_path: string | null;
-  parent_category: string;
-  playlist_name: string;
-  playlist_by: string;
-  playlist_number?: number;
+export type ParsingStatus = "parsing" | "completed" | "failed" | "queued";
+
+export interface ParsingJob {
+  id: string;
+  url: string;
+  source: string;
+  type: "track" | "album" | "playlist" | "artist";
+  title: string;
+  subtitle?: string;
+  progress: number;
+  items_found: number;
+  total_expected?: number;
+  status: ParsingStatus;
+  current_step?: string;
+  created_at: string;
+  error?: string;
+  profile_id?: string;
+  profile_name?: string;
+}
+
+export type PendingItemStatus = "ready" | "parsing" | "checking" | "error" | "queued";
+
+export interface PendingQueueItem {
+  id: string;
+  job_id?: string;
   name: string;
   artist: string;
   album?: string;
+  playlist_name?: string;
   thumbnail?: string;
-  progress: number;
-  error?: string;
-  retry_count?: number;
-  download_speed?: string;
-  file_size?: number | string;
-  length?: number;
+  item_service: string;
+  item_type: string;
+  duration?: string;
   format?: string;
-  bitrate?: number | string;
-  url?: string;
-  downloaded_bytes?: number;
-  total_bytes?: number;
-  eta_seconds?: number | null;
-  queue_position?: number;
-  priority?: number;
+  bitrate?: string;
   profile_id?: string;
   profile_name?: string;
+  url?: string;
+  status: PendingItemStatus;
+  created_at: string;
+  error?: string;
+  isrc?: string;
+  explicit?: boolean;
+}
+
+export type QueueItemStatus =
+    | "Waiting"
+    | "Downloading"
+    | "Paused"
+    | "Converting"
+    | "Decrypting"
+    | "Getting Lyrics"
+    | "Setting Thumbnail"
+    | "Adding To M3U"
+    | "Downloading Subtitles"
+    | "Downloading Chapters"
+    | "Downloading Video"
+    | "Downloading Audio"
+    | "Downloaded"
+    | "Already Exists"
+    | "Failed"
+    | "Cancelled"
+    | "Unavailable"
+    | "Deleted"
+
+  export interface DownloadQueueItem {
+      name: string;
+      artist: string;
+      thumbnail?: string;
+      album?: string;
+      length?: number;
+      file_size?: string;
+      bitrate?: number;
+      local_id: number;
+      item_service: string;
+      item_type: string;
+      item_id: string;
+      item_url: string;
+      playlist_name: string;
+      playlist_by: string;
+      playlist_number?: string;
+      parent_category: string;
+      item_status: QueueItemStatus;
+      progress: number;
+      download_profile: DownloadProfile
+      target_format: string;
+      download_format: string;
+      temp_path: string;
+      file_path: string;
+      error?:string;
+      retry_count?: number;
+    }
+
+
+export interface DownloadProfile {
+  id: string;
+  name: string;
+  format: "flac" | "mp3" | "aac" | "ogg" | "opus" | "alac" | "wav";
+  bitrate: string;
+  download_path: string;
+  is_default?: boolean;
+}
+
+export interface SpotifyCompanionPairing {
+  pairing_token: string;
+  expires_at: number;
+  expires_in: number;
+  device_name: string;
+}
+
+export type YouTubeSetupMode = "upload" | "browser" | "cookie_file" | "none";
+
+export interface YouTubeAuthentication {
+  mode: "none" | "browser" | "cookie_file";
+  browser?: string;
+  cookie_file?: string;
+}
+
+export interface YouTubeAuthenticationStatus {
+  mode: "none" | "browser" | "cookie_file";
+  configured: boolean;
+  ready: boolean;
+  source: string;
+  error: string;
+}
+
+export interface AccountHealth {
+  healthy?: boolean;
+  overall_status: "healthy" | "degraded" | "critical";
+  total_accounts: number;
+  active_accounts: number;
+  authenticated_accounts?: number;
+  configured_accounts?: number;
+  missing_services?: string[];
+  spotify?: {
+    configured: boolean;
+    connected: boolean;
+    status: string;
+  };
+  services: Record<
+    string,
+    {
+      status: "online" | "degraded" | "rate_limited" | "offline";
+      count: number;
+      last_active: string;
+    }
+  >;
 }
 
 export interface LogEntry {
@@ -350,21 +343,108 @@ export interface LogEntry {
   timestamp: string;
   level: "INFO" | "WARNING" | "ERROR" | "GUI";
   message: string;
+  service?: string;
 }
 
 export interface NotificationBannerItem {
   id: string;
   title: string;
   message: string;
-  status: string;
+  status: "Completed" | "Failed" | "Cancelled" | "Downloading" | "success" | "warning" | "error" | "info" | string;
   thumbnail?: string;
-  timestamp?: Date;
+  timestamp?: Date | string;
   url?: string;
 }
 
-export interface NotificationContent {
-  id: string;
-  title: string;
-  message?: string;
-  url?: string;
+export interface UpdateAsset {
+  name: string;
+  size: number;
+  download_url: string;
+  platform: string;
 }
+
+export interface UpdateInfo {
+  repository: string;
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+  release_name: string;
+  release_url?: string;
+  recommended_asset?: UpdateAsset;
+  checked_at?: number;
+  install_supported?: boolean;
+  error?: string;
+}
+
+export interface SystemDiagnostics {
+  status: "online" | "offline";
+  version: string;
+  target: string;
+  uptime_seconds: number;
+  backend: {
+    status: string;
+    version: string;
+  };
+  memory_usage: {
+    rss_mb: number;
+    heap_total_mb: number;
+    heap_used_mb: number;
+  };
+  workers: {
+    queue_worker_active: boolean;
+    download_workers_running: number;
+    max_download_workers: number;
+    retry_worker_active: boolean;
+    active_workers_map: Record<string, boolean>;
+  };
+  queue: {
+    total: number;
+    downloads: number;
+    pending: number;
+    parsing: number;
+    paused: boolean;
+    statuses: Record<string, number>;
+  };
+  ffmpeg: {
+    available: boolean;
+    path: string;
+    version?: string;
+  };
+  disk: {
+    total: number;
+    free: number;
+    used: number;
+  };
+  rate_limit: {
+    active: boolean;
+    host: string;
+    seconds_remaining: number;
+    count: number;
+  };
+  cache: {
+    hits: number;
+    misses: number;
+    size_mb: number;
+  };
+  spotify_api: {
+    configured: boolean;
+    connected: boolean;
+    status: string;
+    rate_limited: boolean;
+    seconds_remaining: number;
+    connect_service?: {
+      running: boolean;
+      device_name: string;
+      port: number;
+    };
+  };
+}
+
+export type QueueBatchAction =
+  | "cancel"
+  | "delete"
+  | "retry"
+  | "priority"
+  | "profile"
+  | "pause"
+  | "resume";

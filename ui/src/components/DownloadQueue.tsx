@@ -1,152 +1,106 @@
-import React, { useEffect, useState } from 'react';
-import { Download, FolderOpen, Trash2, RefreshCw, CheckCircle2, AlertCircle, Clock, Zap, Copy, Check, Play, Pause, XCircle, ListMusic, ChevronDown, ChevronUp, GripVertical, ArrowDown, ArrowUp, Square, CheckSquare, Music2, Waves, Cloud, Disc3, CirclePlay, Heart, Headphones, Film } from 'lucide-react';
-import { DownloadQueueItem, OTSConfig } from '../types';
-import { DownloadProfile, getTargetBackendUrl, QueueBatchAction } from '../lib/api';
-import { OtsSelect } from './OtsSelect';
+import { Badge } from "@astryxdesign/core/Badge";
+import { Button } from "@astryxdesign/core/Button";
+import { Card } from "@astryxdesign/core/Card";
+import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { ProgressBar } from "@astryxdesign/core/ProgressBar";
+import { Tab, TabList } from "@astryxdesign/core/TabList";
+import {
+  AlertCircle,
+  Check,
+  CheckSquare,
+  ChevronRight,
+  Clock,
+  Copy,
+  Disc,
+  Download,
+  ExternalLink,
+  FileDown,
+  Folder,
+  Info,
+  Layers,
+  PanelRightClose,
+  PanelRightOpen,
+  RotateCcw,
+  Sliders,
+  Square,
+  Trash2,
+  User,
+  XCircle
+} from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { getTargetBackendUrl } from "../lib/api";
+import { getServiceInfo } from "../lib/catalogServices";
+import { DownloadProfile, DownloadQueueItem, QueueBatchAction, QueueItemStatus } from "../types";
+import { PageHeader } from "./PageHeader";
+
 
 interface DownloadQueueProps {
   queue: DownloadQueueItem[];
+  downloadsPaused: boolean;
+  profiles: DownloadProfile[];
+  activeProfile: string;
+  onPauseToggle: () => Promise<boolean>;
   onClearCompleted: () => Promise<void>;
   onClearFailed: () => Promise<void>;
   onRetryFailed: () => Promise<void>;
-  onAction: (local_id: string, action: 'cancel' | 'delete' | 'retry') => Promise<void>;
-  onPauseToggle: () => Promise<void>;
-  downloadsPaused: boolean;
-  downloadSpeed: number;
-  downloadEta: number;
-  onReorder: (local_ids: string[]) => Promise<void>;
-  profiles: DownloadProfile[];
-  activeProfile: string;
-  onProfileChange: (profile_id: string) => Promise<void>;
-  onBatchAction: (local_ids: string[], action: QueueBatchAction, options?: { priority?: number; profile_id?: string }) => Promise<void>;
-  onVerify: () => Promise<void>;
-  config: OTSConfig | null;
+  onAction: (local_id: number, action: "cancel" | "delete" | "retry") => Promise<void>;
+  onBatchAction: (local_ids: number[], action: QueueBatchAction, options?: any) => Promise<void>;
+  onReorder?: (local_ids: string[]) => Promise<void>;
 }
-
-type StatusFilter = 'All' | 'Downloading' | 'Paused' | 'Waiting' | 'Downloaded' | 'Failed' | 'Cancelled' | 'Unavailable' | 'Already Exists';
-
-type PlaylistGroup = {
-  key: string;
-  name: string;
-  owner: string;
-  items: DownloadQueueItem[];
-};
 
 export const DownloadQueue: React.FC<DownloadQueueProps> = ({
   queue,
+  downloadsPaused,
+  profiles: _profiles,
+  activeProfile,
+  onPauseToggle,
   onClearCompleted,
   onClearFailed,
   onRetryFailed,
   onAction,
-  onPauseToggle,
-  downloadsPaused,
-  downloadSpeed,
-  downloadEta,
-  onReorder,
-  profiles,
-  activeProfile,
-  onProfileChange,
   onBatchAction,
-  onVerify,
-  config
 }) => {
-  const [filter, setFilter] = useState<StatusFilter>('All');
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [loadingAction, setLoadingAction] = useState(false);
-  const [showPlaylistTracks, setShowPlaylistTracks] = useState(false);
-  const [draggedId, setDraggedId] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [batchPriority, setBatchPriority] = useState(0);
-  const [batchProfile, setBatchProfile] = useState("");
+  const [filter, setFilter] = useState<string>("All");
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
+  const [showSidePanel, setShowSidePanel] = useState<boolean>(true);
+  const [copiedId, setCopiedId] = useState<number | null>(null);
 
-  // Filter items based on selected pill AND config display flags
-  const filteredQueue = queue.filter(item => {
-    if (filter === 'Downloaded' && (item.item_status === 'Already Exists' || item.item_status === filter)) return true;
-
-    if (filter !== 'All' && item.item_status !== filter) return false;
-
-    // Check config filter flags
-    if (item.item_status === 'Waiting' && config?.download_queue_show_waiting === false) return false;
-    if (item.item_status === 'Failed' && config?.download_queue_show_failed === false) return false;
-    if (item.item_status === 'Cancelled' && config?.download_queue_show_cancelled === false) return false;
-    if (item.item_status === 'Unavailable' && config?.download_queue_show_unavailable === false) return false;
-    if (item.item_status === 'Downloaded' && config?.download_queue_show_completed === false) return false;
-
-    return true;
+  // Filtered queue items
+  const filteredItems = queue.filter((item) => {
+    if (filter === "All") return true;
+    if (filter === "Downloaded" && item.item_status === "Already Exists") return true;
+    return item.item_status === filter;
   });
 
+  // Ensure an item is selected by default if available
+  useEffect(() => {
+    if (filteredItems.length > 0) {
+      const stillExists = filteredItems.some((i) => i.local_id === selectedItemId);
+      if (!stillExists || !selectedItemId) {
+        setSelectedItemId(filteredItems[0].local_id);
+      }
+    } else {
+      setSelectedItemId(null);
+    }
+  }, [filteredItems, selectedItemId]);
+
+  const selectedItem = queue.find((i) => i.local_id === selectedItemId) || null;
+
+  // Aggregated status counts
   const counts = {
     All: queue.length,
-    Downloading: queue.filter(i => i.item_status === 'Downloading').length,
-    Paused: queue.filter(i => i.item_status === 'Paused').length,
-    Waiting: queue.filter(i => i.item_status === 'Waiting').length,
-    Downloaded: queue.filter(i => i.item_status === 'Downloaded' || i.item_status === 'Already Exists').length,
-    Failed: queue.filter(i => i.item_status === 'Failed').length,
-    Cancelled: queue.filter(i => i.item_status === 'Cancelled').length,
-    Unavailable: queue.filter(i => i.item_status === 'Unavailable').length,
+    Downloading: queue.filter((i) => i.item_status === "Downloading").length,
+    Waiting: queue.filter((i) => i.item_status === "Waiting").length,
+    Paused: queue.filter((i) => i.item_status === "Paused").length,
+    Downloaded: queue.filter((i) => i.item_status === "Downloaded" || i.item_status === "Already Exists").length,
+    Failed: queue.filter((i) => i.item_status === "Failed").length,
+    Cancelled: queue.filter((i) => i.item_status === "Cancelled").length,
   };
 
-  const playlistGroupMap = new Map<string, PlaylistGroup>();
-  queue.forEach((item) => {
-    if (item.parent_category !== 'playlist' || !item.playlist_name) return;
-    const key = `${item.playlist_name}\u0000${item.playlist_by || ''}`;
-    const existing = playlistGroupMap.get(key);
-    if (existing) {
-      existing.items.push(item);
-    } else {
-      playlistGroupMap.set(key, {
-        key,
-        name: item.playlist_name,
-        owner: item.playlist_by || '',
-        items: [item],
-      });
-    }
-  });
-  const playlistGroups = Array.from(playlistGroupMap.values());
-  const visibleQueueItems = showPlaylistTracks
-    ? filteredQueue
-    : filteredQueue.filter((item) => item.parent_category !== 'playlist');
+  const downloadingItems = queue.filter((i) => i.item_status === "Downloading");
 
-  useEffect(() => {
-    setSelectedIds((current) => current.filter((id) => queue.some((item) => item.local_id === id)));
-  }, [queue]);
-
-  const toggleSelected = (localId: string) => {
-    setSelectedIds((current) => current.includes(localId) ? current.filter((id) => id !== localId) : [...current, localId]);
-  };
-
-  const toggleAllVisible = () => {
-    const visibleIds = visibleQueueItems.map((item) => item.local_id);
-    setSelectedIds((current) => visibleIds.every((id) => current.includes(id)) ? current.filter((id) => !visibleIds.includes(id)) : Array.from(new Set([...current, ...visibleIds])));
-  };
-
-  const runBatch = async (action: QueueBatchAction, options: { priority?: number; profile_id?: string } = {}) => {
-    if (!selectedIds.length) return;
-    setLoadingAction(true);
-    await onBatchAction(selectedIds, action, options);
-    if (action === "delete" || action === "cancel" || action === "retry") setSelectedIds([]);
-    setLoadingAction(false);
-  };
-
-  const handleCopyLink = (item: DownloadQueueItem) => {
-    navigator.clipboard.writeText(item.file_path || `https://open.spotify.com/track/${item.item_id}`);
-    setCopiedId(item.local_id);
-    setTimeout(() => setCopiedId(null), 2000);
-  };
-
-  const handleLocateClick = (item: DownloadQueueItem) => {
-    alert(`📂 OnTheSpot Audio Path:\n${item.file_path || config?.audio_download_path + '/Tracks/' + item.artist + '/' + item.name + '.flac'}`);
-  };
-
-  const handleOpenClick = async (item: DownloadQueueItem) => {
-    if (item.file_path) {
-      alert(`▶ Playing local file:\n${item.file_path}`);
-    } else {
-      alert("⚠️ File is still queued or downloading.");
-    }
-  };
-
-  const handleDownloadFile = (item: DownloadQueueItem) => {
+  const downloadFile = (item: DownloadQueueItem) => {
     if (item.file_path) {
       const url = `${getTargetBackendUrl()}/queue/downloads/download?lid=${encodeURIComponent(item.local_id)}`;
       window.open(url, '_blank');
@@ -154,538 +108,926 @@ export const DownloadQueue: React.FC<DownloadQueueProps> = ({
       alert("⚠️ File is still queued or downloading.");
     }
   };
-  
-  // Clean Material tonal badges for status
-  const getStatusBadge = (status: string) => {
-    const baseClasses = "inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors duration-200";
 
+  const toggleSelectAll = () => {
+    if (selectedIds.length === filteredItems.length && filteredItems.length > 0) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(filteredItems.map((i) => i.local_id));
+    }
+  };
+
+  const toggleSelectItem = (e: React.MouseEvent, id: number) => {
+    e.stopPropagation();
+    if (selectedIds.includes(id)) {
+      setSelectedIds(selectedIds.filter((item) => item !== id));
+    } else {
+      setSelectedIds([...selectedIds, id]);
+    }
+  };
+
+  const handleItemClick = (id: number) => {
+    setSelectedItemId(id);
+  };
+
+  const handleOpenDetails = (e: React.MouseEvent, id: number) => {
+    e.stopPropagation();
+    setSelectedItemId(id);
+    setShowSidePanel(true);
+  };
+
+  const copyUrl = (id: number, url?: string) => {
+    if (!url) return;
+    navigator.clipboard.writeText(url);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const getStatusBadge = (status: QueueItemStatus, compact = false) => {
     switch (status) {
-      case 'Downloading':
-        return <span className={`${baseClasses} bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300`}><Zap className="w-3 h-3" /> Downloading</span>;
-      case 'Paused':
-        return <span className={`${baseClasses} bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300`}><Pause className="w-3 h-3" /> Paused</span>;
-      case 'Downloaded':
-      case 'Already Exists':
-        return <span className={`${baseClasses} bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300`}><CheckCircle2 className="w-3 h-3" /> Completed</span>;
-      case 'Waiting':
-        return <span className={`${baseClasses} bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300`}><Clock className="w-3 h-3" /> Waiting</span>;
-      case 'Failed':
-        return <span className={`${baseClasses} bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300`}><AlertCircle className="w-3 h-3" /> Failed</span>;
+      case "Downloading":
+        return <Badge variant="info" label="Downloading" />;
+      case "Downloaded":
+      case "Already Exists":
+        return <Badge variant="success" label={compact ? "Ready" : status} />;
+      case "Failed":
+        return <Badge variant="error" label="Failed" />;
+      case "Paused":
+        return <Badge variant="warning" label="Paused" />;
+      case "Waiting":
+        return <Badge variant="neutral" label="Waiting" />;
+      case "Cancelled":
+        return <Badge variant="neutral" label="Cancelled" />;
       default:
-        const isCancelled = status === 'Cancelled';
-        return (
-          <span className={`${baseClasses} ${isCancelled ? 'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400' : 'bg-gray-100 text-gray-700 dark:bg-neutral-800 dark:text-neutral-300'}`}>
-            {status}
-          </span>
-        );
+        return <Badge variant="info" label={status} />;
     }
   };
 
-  // Standardized service badges
-  const getServiceBadge = (service: string) => {
-    const base = "inline-flex items-center gap-1.5 border px-2 py-1 text-[10px] font-semibold tracking-wide transition-colors";
-    switch (service.toLowerCase()) {
-      case 'spotify': return <span title="Source service: Spotify" className={`${base} border-green-500/30 bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300`}><Music2 className="h-3 w-3" />Spotify</span>;
-      case 'tidal': return <span title="Source service: Tidal" className={`${base} border-cyan-500/30 bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300`}><Waves className="h-3 w-3" />Tidal</span>;
-      case 'apple_music':
-      case 'applemusic': return <span title="Source service: Apple Music" className={`${base} border-rose-500/30 bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300`}><Music2 className="h-3 w-3" />Apple Music</span>;
-      case 'soundcloud': return <span title="Source service: SoundCloud" className={`${base} border-orange-500/30 bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300`}><Cloud className="h-3 w-3" />SoundCloud</span>;
-      case 'bandcamp': return <span title="Source service: Bandcamp" className={`${base} border-blue-500/30 bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300`}><Disc3 className="h-3 w-3" />Bandcamp</span>;
-      case 'youtube_music':
-      case 'youtube': return <span title="Source service: YouTube Music" className={`${base} border-red-500/30 bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300`}><CirclePlay className="h-3 w-3" />YouTube Music</span>;
-      case 'deezer': return <span title="Source service: Deezer" className={`${base} border-violet-500/30 bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300`}><Heart className="h-3 w-3" />Deezer</span>;
-      case 'qobuz': return <span title="Source service: Qobuz" className={`${base} border-sky-500/30 bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300`}><Headphones className="h-3 w-3" />Qobuz</span>;
-      case 'crunchyroll': return <span title="Source service: Crunchyroll" className={`${base} border-amber-500/30 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300`}><Film className="h-3 w-3" />Crunchyroll</span>;
-      default: return <span title="Source service: Generic" className={`${base} border-gray-300 bg-gray-100 text-gray-800 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300`}><Download className="h-3 w-3" />Generic</span>;
-    }
-  };
-
-  const showThumbnails = config?.show_download_thumbnails ?? true;
-
-  const iconBtnClass = "p-2 rounded-full transition-colors focus:outline-none focus:ring-2 disabled:opacity-40 disabled:cursor-not-allowed";
-
-  const moveQueueItem = (sourceId: string, targetId: string) => {
-    if (sourceId === targetId) return;
-    const ids = queue.filter((item) => item.item_status === 'Waiting').map((item) => item.local_id);
-    const sourceIndex = ids.indexOf(sourceId);
-    const targetIndex = ids.indexOf(targetId);
-    if (sourceIndex < 0 || targetIndex < 0) return;
-    const [moved] = ids.splice(sourceIndex, 1);
-    ids.splice(targetIndex, 0, moved);
-    void onReorder(ids);
-  };
-
-  const formatEta = (seconds?: number | null) => {
-    if (!seconds || seconds < 0) return "—";
-    if (seconds < 60) return `${seconds}s`;
-    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-  };
-
-  const formatSpeed = (bytesPerSecond: number) => {
-    if (!bytesPerSecond) return "—";
-    const units = ["B", "KB", "MB", "GB"];
-    let value = bytesPerSecond;
-    let index = 0;
-    while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1; }
-    return `${value.toFixed(index ? 1 : 0)} ${units[index]}/s`;
-  };
+  const filterTabs: Array<{ id: string; label: string; count: number }> = [
+    { id: "All", label: "All", count: counts.All },
+    { id: "Downloading", label: "Downloading", count: counts.Downloading },
+    { id: "Waiting", label: "Waiting", count: counts.Waiting },
+    { id: "Paused", label: "Paused", count: counts.Paused },
+    { id: "Downloaded", label: "Downloaded", count: counts.Downloaded },
+    { id: "Failed", label: "Failed", count: counts.Failed },
+    { id: "Cancelled", label: "Cancelled", count: counts.Cancelled },
+  ];
 
   return (
-    <div className="spotify-fade-up ots-page flex flex-col gap-6 font-sans">
+    <div className="space-y-4" id="download-queue-view">
+      {/* Reusable PageHeader for Queue */}
+      <PageHeader
+        id="queue-page-header"
+        icon={<Download className="w-5 h-5" />}
+        title="Download Queue"
+        badge={
+          downloadsPaused
+            ? { label: "Worker Paused", variant: "warning" }
+            : counts.Downloading > 0
+            ? { label: `${counts.Downloading} Active`, variant: "info" }
+            : undefined
+        }
+        description={`${counts.Downloading} active • ${counts.Waiting} waiting • ${counts.Downloaded} completed`}
+        actions={
+          <>
+            {/* Toggle Collapsible Side Panel Button */}
+            <Button
+              variant={showSidePanel ? "secondary" : "primary"}
+              size="sm"
+              label={showSidePanel ? "Hide Details" : "Show Details"}
+              icon={
+                showSidePanel ? (
+                  <PanelRightClose className="w-3.5 h-3.5" />
+                ) : (
+                  <PanelRightOpen className="w-3.5 h-3.5" />
+                )
+              }
+              onClick={() => setShowSidePanel(!showSidePanel)}
+              id="btn-toggle-side-view"
+            />
 
-      {/* Top Bar: Status & Queue Controls */}
-      <div className="ots-queue-header p-5 md:p-6">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-3">
-              <h2 className="text-2xl font-bold tracking-tight text-white">Download Queue</h2>
-              <div className="flex items-center gap-1.5 border border-[#3a3a3a] bg-[#181818] px-3 py-1.5 text-xs font-bold">
-                <span className="text-[#1ed760]">{counts.Downloading} Active</span>
-                <span className="text-[#555]">•</span>
-                <span className="text-[#f6b94a]">{counts.Waiting} Waiting</span>
-              </div>
+            {counts.Failed > 0 && (
+              <Button
+                variant="secondary"
+                size="sm"
+                label={`Retry Failed (${counts.Failed})`}
+                icon={<RotateCcw className="w-3.5 h-3.5" />}
+                onClick={onRetryFailed}
+                id="btn-retry-failed"
+              />
+            )}
+
+            {counts.Downloaded > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                label="Clear Completed"
+                onClick={onClearCompleted}
+                id="btn-clear-completed"
+              />
+            )}
+
+            {counts.Failed > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                label="Clear Failed"
+                onClick={onClearFailed}
+                id="btn-clear-failed"
+              />
+            )}
+          </>
+        }
+        bottomContent={
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            {/* Astryx TabList for filtering */}
+            <div className="overflow-x-auto h-8">
+              <TabList
+                value={filter}
+                onChange={(val) => setFilter(val)}
+                size="sm"
+              >
+                {filterTabs.map((tab) => (
+                  <Tab
+                    key={tab.id}
+                    value={tab.id}
+                    label={tab.label}
+                    endContent={
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-neutral-200 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 font-mono">
+                        {tab.count}
+                      </span>
+                    }
+                  />
+                ))}
+              </TabList>
             </div>
-            <p className="mt-2 text-sm text-[#a7a7a7]">
-              {queue.length === 0 ? "Your queue is empty" : `${queue.length} item${queue.length === 1 ? "" : "s"} in the queue`}
-              <span className="mx-2 text-[#555]">•</span>
-              Workers: {config?.maximum_download_workers || 2} DL / {config?.maximum_queue_workers || 3} Queue
-              <span className="mx-2 text-[#555]">•</span>
-              Delay: {config?.download_delay || 3}s
-            </p>
-            {(downloadSpeed > 0 || downloadsPaused) && (
-              <p className={`mt-3 inline-flex items-center gap-2 border px-3 py-1.5 text-xs font-bold ${downloadsPaused ? "border-[#6a4920] bg-[#2c2417] text-[#f6b94a]" : "border-[#275c37] bg-[#173b25] text-[#b8f5c9]"}`}>
-                <span className={`h-1.5 w-1.5 rounded-full ${downloadsPaused ? "bg-[#f6b94a]" : "animate-pulse bg-[#1ed760]"}`} />
-                {downloadsPaused ? "Downloads paused" : `${formatSpeed(downloadSpeed)} · ETA ${formatEta(downloadEta)}`}
-              </p>
+
+            {/* Select All toggle button */}
+            {filteredItems.length > 0 && (
+              <button
+                type="button"
+                onClick={toggleSelectAll}
+                className="text-xs font-medium text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 flex items-center gap-1.5 shrink-0 px-2 py-1 cursor-pointer transition"
+                id="btn-queue-select-all"
+              >
+                {selectedIds.length === filteredItems.length ? (
+                  <CheckSquare className="w-3.5 h-3.5 text-neutral-900 dark:text-neutral-100" />
+                ) : (
+                  <Square className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  {selectedIds.length > 0 ? `${selectedIds.length} Selected` : "Select All"}
+                </span>
+              </button>
             )}
           </div>
+        }
+      />
 
-          <div className="flex shrink-0 flex-col gap-2.5 lg:min-w-[590px] lg:items-end">
-            <div className="flex flex-wrap items-center gap-2">
-              {profiles.length > 0 && (
-                <OtsSelect
-                  value={activeProfile}
-                  onChange={(event) => void onProfileChange(event.target.value)}
-                  className="h-11 max-w-[190px] text-xs font-bold"
-                  title="Download profile"
-                >
-                  {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
-                </OtsSelect>
-              )}
-              <button
-                onClick={async () => { setLoadingAction(true); await onPauseToggle(); setLoadingAction(false); }}
-                disabled={queue.length === 0 || loadingAction}
-                className="ots-button ots-button-primary ots-button-md disabled:cursor-not-allowed"
-              >
-                {downloadsPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
-                {downloadsPaused ? "Resume" : "Pause"}
-              </button>
+      {/* Batch Action Toolbar */}
+      {selectedIds.length > 0 && (
+        <Card padding={3} elevation="low" id="queue-batch-bar">
+          <div className="flex items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2 font-medium text-neutral-700 dark:text-neutral-300">
+              <CheckSquare className="w-4 h-4 text-neutral-900 dark:text-neutral-100" />
+              <span>{selectedIds.length} items selected in queue</span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-              <button
-                onClick={async () => {
-                  setLoadingAction(true);
-                  await onRetryFailed();
-                  setLoadingAction(false);
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button
+                variant="secondary"
+                size="sm"
+                label="Retry Selected"
+                icon={<RotateCcw className="w-3 h-3" />}
+                onClick={() => onBatchAction(selectedIds, "retry")}
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                label="Cancel Selected"
+                icon={<XCircle className="w-3 h-3" />}
+                onClick={() => onBatchAction(selectedIds, "cancel")}
+              />
+              <Button
+                variant="destructive"
+                size="sm"
+                label="Delete Selected"
+                icon={<Trash2 className="w-3 h-3" />}
+                onClick={() => {
+                  onBatchAction(selectedIds, "delete");
+                  setSelectedIds([]);
                 }}
-                disabled={(counts.Failed === 0 && counts.Cancelled === 0 && counts.Unavailable === 0) || loadingAction}
-                className="ots-button ots-button-warning ots-button-sm disabled:cursor-not-allowed"
-              >
-                <RefreshCw className={`h-4 w-4 ${loadingAction ? "animate-spin" : ""}`} />
-                Retry Failed ({counts.Failed + counts.Cancelled + counts.Unavailable})
-              </button>
-
-              <button
-                onClick={async () => {
-                  setLoadingAction(true);
-                  if (window.confirm(`Remove all ${counts.Downloaded} completed items from the queue?`)) await onClearCompleted();
-                  setLoadingAction(false);
-                }}
-                disabled={counts.Downloaded === 0 || loadingAction}
-                className="ots-button ots-button-danger ots-button-sm disabled:cursor-not-allowed"
-              >
-                <Trash2 className="h-4 w-4" />
-                Clear Completed ({counts.Downloaded})
-              </button>
-
-              <button
-                onClick={async () => {
-                  setLoadingAction(true);
-                  if (window.confirm(`Remove all ${counts.Failed} failed items from the queue?`)) await onClearFailed();
-                  setLoadingAction(false);
-                }}
-                disabled={counts.Failed + counts.Cancelled + counts.Unavailable === 0 || loadingAction}
-                className="ots-button ots-button-danger ots-button-sm disabled:cursor-not-allowed"
-              >
-                <Trash2 className="h-4 w-4" />
-                Clear Failed ({counts.Failed + counts.Cancelled + counts.Unavailable})
-              </button>
-              <button type="button" onClick={() => void onVerify()} disabled={counts.Downloaded === 0 || loadingAction} className="ots-button ots-button-secondary ots-button-sm disabled:cursor-not-allowed"><CheckCircle2 className="h-4 w-4" /> Verify files</button>
+              />
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Filter Chips */}
-      <div className="ots-browse-tabs ots-queue-filters spotify-scrollbar flex items-center gap-2">
-        {(['All', 'Downloading', 'Paused', 'Waiting', 'Downloaded', 'Failed', 'Cancelled', 'Unavailable'] as StatusFilter[]).map((pill) => (
-          <button
-            key={pill}
-            onClick={() => setFilter(pill)}
-            className={`ots-filter-chip ${filter === pill ? 'ots-filter-chip-active' : ''}`}
-          >
-            <span>{pill}</span>
-            <span className="ots-filter-count">
-              {counts[pill]}
-            </span>
-          </button>
-        ))}
-      </div>
-
-      <div className="ots-panel flex flex-col gap-3 p-4 md:flex-row md:items-center">
-        <button type="button" onClick={toggleAllVisible} className="ots-button ots-button-secondary ots-button-sm"><CheckSquare className="h-4 w-4" /> {visibleQueueItems.length > 0 && visibleQueueItems.every((item) => selectedIds.includes(item.local_id)) ? "Clear selection" : "Select visible"}</button>
-        {selectedIds.length > 0 && <>
-          <span className="text-xs font-bold text-[#b3b3b3]">{selectedIds.length} selected</span>
-          <button type="button" onClick={() => void runBatch("pause")} disabled={loadingAction} className="ots-button ots-button-secondary ots-button-sm"><Pause className="h-4 w-4" /> Pause</button>
-          <button type="button" onClick={() => void runBatch("resume")} disabled={loadingAction} className="ots-button ots-button-secondary ots-button-sm"><Play className="h-4 w-4" /> Resume</button>
-          <button type="button" onClick={() => void runBatch("retry")} disabled={loadingAction} className="ots-button ots-button-warning ots-button-sm"><RefreshCw className="h-4 w-4" /> Retry</button>
-          <button type="button" onClick={() => void runBatch("cancel")} disabled={loadingAction} className="ots-button ots-button-danger ots-button-sm"><XCircle className="h-4 w-4" /> Cancel</button>
-          <button type="button" onClick={() => { if (window.confirm(`Delete ${selectedIds.length} selected queue item(s)?`)) void runBatch("delete"); }} disabled={loadingAction} className="ots-button ots-button-danger ots-button-sm"><Trash2 className="h-4 w-4" /> Delete</button>
-          <OtsSelect value={batchPriority} onChange={(event) => setBatchPriority(Number(event.target.value))} className="h-9 text-xs"><option value={0}>Normal priority</option><option value={1}>High priority</option><option value={2}>Urgent priority</option></OtsSelect>
-          <button type="button" onClick={() => void runBatch("priority", { priority: batchPriority })} disabled={loadingAction} className="ots-button ots-button-secondary ots-button-sm">Apply priority</button>
-          <OtsSelect value={batchProfile} onChange={(event) => setBatchProfile(event.target.value)} className="h-9 max-w-44 text-xs"><option value="">Change profile…</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</OtsSelect>
-          <button type="button" onClick={() => void runBatch("profile", { profile_id: batchProfile })} disabled={!batchProfile || loadingAction} className="ots-button ots-button-secondary ots-button-sm">Apply profile</button>
-        </>}
-      </div>
-
-      {playlistGroups.length > 0 && (
-        <div className="ots-panel p-5">
-          <div className="flex items-center justify-between gap-4 mb-4">
-            <div>
-              <h3 className="flex items-center gap-2 text-base font-medium text-gray-900 dark:text-neutral-100">
-                <ListMusic className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                Playlist progress
-              </h3>
-              <p className="text-xs text-gray-500 dark:text-neutral-400 mt-1">
-                Tracks download individually, with one overall progress view.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowPlaylistTracks((value) => !value)}
-              className="flex items-center gap-1.5 rounded-full bg-[#282828] px-3 py-2 text-xs font-bold text-[#1ed760] transition-colors hover:bg-[#333]"
-            >
-              {showPlaylistTracks ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              {showPlaylistTracks ? 'Hide tracks' : 'Show tracks'}
-            </button>
-          </div>
-
-          <div className="flex flex-col gap-4">
-            {playlistGroups.map((group) => {
-              const completed = group.items.filter((item) => item.item_status === 'Downloaded' || (item.item_status as string) === 'Already Exists').length;
-              const activeItem = group.items.find((item) => item.item_status === 'Downloading' || item.item_status === 'Paused');
-              const nextItem = group.items.find((item) => item.item_status === 'Waiting');
-              const progress = group.items.length
-                ? Math.round(group.items.reduce((sum, item) => sum + Math.min(100, Math.max(0, Number(item.progress) || 0)), 0) / group.items.length)
-                : 0;
-              const currentItem = activeItem || nextItem;
-
-              return (
-                <div key={group.key} className="rounded-xl border border-[#303030] bg-[#202020] p-4">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-medium text-gray-900 dark:text-neutral-100 truncate">
-                        {group.name}
-                      </p>
-                      <p className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5">
-                        {group.owner ? `${group.owner} • ` : ''}{completed}/{group.items.length} tracks completed
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-3 min-w-0">
-                      <p className="text-xs text-gray-600 dark:text-neutral-300 truncate">
-                        {activeItem
-                          ? activeItem.item_status === 'Paused'
-                            ? `Paused: ${activeItem.name || 'current track'}`
-                            : `Downloading: ${activeItem.name || 'current track'}`
-                          : nextItem
-                            ? `Next: ${nextItem.name || 'queued track'}`
-                            : 'Playlist complete'}
-                      </p>
-                      {activeItem && (
-                        <button
-                          type="button"
-                          onClick={() => onAction(activeItem.local_id, 'cancel')}
-                          className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20"
-                        >
-                          <XCircle className="w-3.5 h-3.5" />
-                          Cancel track
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="w-full h-2 rounded-full bg-gray-100 dark:bg-neutral-800 overflow-hidden mt-4">
-                    <div
-                      className="h-full rounded-full bg-blue-500 transition-all duration-500"
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between text-xs text-gray-500 dark:text-neutral-400 mt-2">
-                    <span>{progress}% overall</span>
-                    <span>{group.items.length - completed} remaining</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        </Card>
       )}
 
-      {/* Queue Items Table / List */}
-      {(visibleQueueItems.length > 0 || playlistGroups.length === 0) && (
-        <div className="ots-panel overflow-hidden">
-          {visibleQueueItems.length === 0 ? (
-              <div className="p-16 flex flex-col items-center justify-center text-gray-500 dark:text-neutral-500 gap-3">
-                <Download className="w-8 h-8 text-gray-400 dark:text-neutral-600" />
-                <p className="text-sm font-medium">No items match filter "{filter}"</p>
-              </div>
-          ) : (
-            <div className="divide-y divide-gray-100 dark:divide-neutral-800/60">
-            {visibleQueueItems.map((item) => {
-              const isDownloading = item.item_status === 'Downloading' || item.item_status === 'Paused';
-              const isCompleted = item.item_status === 'Downloaded' || item.item_status === 'Already Exists';
+      {/* Divided Layout: Left Queue List + Collapsible Side Details Panel */}
+      {filteredItems.length === 0 ? (
+        <Card padding={6} elevation="low" id="queue-empty-card">
+          <EmptyState
+            title={filter === "All" ? "Download queue is empty" : `No items marked as '${filter}'`}
+            description="Search for tracks, albums, or playlists from the Dashboard and click 'Queue Download' to begin downloading."
+          />
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start" id="queue-divided-panel">
+          {/* LEFT PANEL: Queue Item List (expands to full 12 cols when side view is collapsed) */}
+          <div
+            className={`space-y-2 transition-all duration-200 ${
+              showSidePanel ? "lg:col-span-6 xl:col-span-6" : "lg:col-span-12"
+            }`}
+            id="queue-items-list"
+          >
+            <div className="flex items-center justify-between px-1 text-xs text-neutral-500 font-medium">
+              <span>Items ({filteredItems.length})</span>
+              <span>
+                {showSidePanel
+                  ? "Select item to view details"
+                  : "Detail view collapsed • Full track specs & transfer actions displayed inline"}
+              </span>
+            </div>
 
-              return (
-                <div
-                  key={item.local_id}
-                  className="group p-4 md:p-5 flex flex-col gap-4 transition-colors hover:bg-gray-50/50 dark:hover:bg-white/[0.02]"
-                >
-                  
-                  {/* Top Row: Info & Actions */}
-                  <div
-                    className="flex w-full items-start justify-between gap-4"
-                    draggable={item.item_status === 'Waiting'}
-                    onDragStart={() => setDraggedId(item.local_id)}
-                    onDragEnd={() => setDraggedId(null)}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={() => { if (draggedId) moveQueueItem(draggedId, item.local_id); setDraggedId(null); }}
-                  >
-                    
-                    {/* Left: Thumbnail & Text Info */}
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <button type="button" onClick={() => toggleSelected(item.local_id)} className="shrink-0 text-[#777] hover:text-[#1ed760]" aria-label={`${selectedIds.includes(item.local_id) ? "Deselect" : "Select"} ${item.name}`}>
-                        {selectedIds.includes(item.local_id) ? <CheckSquare className="h-5 w-5 text-[#1ed760]" /> : <Square className="h-5 w-5" />}
-                      </button>
-                      {showThumbnails && (
-                        <div className="relative w-14 h-14 rounded-xl overflow-hidden bg-gray-100 dark:bg-neutral-800 shrink-0 border border-gray-200 dark:border-neutral-700/50">
+            <div className="space-y-2 max-h-[calc(100vh-280px)] overflow-y-auto pr-1">
+              {filteredItems.map((item) => {
+                const serviceInfo = getServiceInfo(item.item_service);
+                const isSelectedInBatch = selectedIds.includes(item.local_id);
+                const isFocused = item.local_id === selectedItemId;
+                const isDownloading = item.item_status === "Downloading";
+                const isDownloaded =
+                  item.item_status === "Downloaded" || item.item_status === "Already Exists";
+                const isFailed = item.item_status === "Failed";
+
+                const absoluteIndex = queue.findIndex((qItem) => qItem.local_id === item.local_id);
+                const queueNum = absoluteIndex + 1;
+
+                if (!showSidePanel) {
+                  {/* EXPANDED ROW VIEW: Shown when the side detail panel is collapsed */}
+                  return (
+                    <div
+                      key={item.local_id}
+                      onClick={() => handleItemClick(item.local_id)}
+                      id={`queue-item-row-${item.local_id}`}
+                      className={`group relative flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-3.5 rounded-xl border transition-all cursor-pointer select-none ${
+                        isFocused
+                          ? "bg-neutral-50 dark:bg-neutral-800/90 border-emerald-500/80 dark:border-emerald-500/80 shadow-xs ring-1 ring-emerald-500/30"
+                          : "bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-600"
+                      }`}
+                    >
+                      {/* Left: Checkbox, Queue Number, Artwork & Grouped Media Info */}
+                      <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                        {/* Checkbox for batch selection */}
+                        <button
+                          type="button"
+                          onClick={(e) => toggleSelectItem(e, item.local_id)}
+                          className="text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 cursor-pointer p-0.5 shrink-0"
+                          aria-label={`Select ${item.name}`}
+                        >
+                          {isSelectedInBatch ? (
+                            <CheckSquare className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                          ) : (
+                            <Square className="w-4 h-4" />
+                          )}
+                        </button>
+
+                        {/* Queue number */}
+                        <span className="text-[11px] font-mono font-medium text-neutral-400 dark:text-neutral-500 w-5 text-right shrink-0">
+                          #{queueNum}
+                        </span>
+
+                        {/* Artwork with service indicator dot */}
+                        <div className="relative w-12 h-12 rounded-lg overflow-hidden bg-neutral-100 dark:bg-neutral-800 shrink-0 border border-neutral-200/80 dark:border-neutral-700/80 shadow-2xs">
                           <img
-                            src={item.thumbnail || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=150&auto=format&fit=crop&q=80"}
+                            src={
+                              item.thumbnail ||
+                              "null"
+                            }
                             alt={item.name}
                             className="w-full h-full object-cover"
                             referrerPolicy="no-referrer"
                           />
                         </div>
-                      )}
 
-                      <div className="relative min-w-0 flex-1 flex flex-col justify-center">
-                        {item.item_status === 'Waiting' && <span title="Drag to reorder"><GripVertical className="absolute -left-7 top-1 hidden h-4 w-4 cursor-grab text-gray-400 sm:block" /></span>}
-                        {/* Title */}
-                        <h4 className="font-medium text-gray-900 dark:text-neutral-100 text-sm md:text-base truncate leading-snug">
-                          {item.name}
-                        </h4>
-                        {/* Artist & Album */}
-                        <p className="text-xs md:text-sm text-gray-500 dark:text-neutral-400 truncate mt-0.5">
-                          {item.artist}
-                          {item.album && (
-                            <span className="text-gray-400 dark:text-neutral-500"> • {item.album} </span>
-                          )}
-                          {isCompleted && item.file_path && (
-                          <span className="text-sm md:text-xs text-gray-600 dark:text-neutral-600 truncate mt-0.5">
-                            • {item.file_path}
-                          </span>
-                          )}
-                        </p>
-                        {/* Path if completed */}
-                        
-                        {/* Badges */}
-                        <div className="flex flex-wrap items-center gap-2 mt-2">
-                          {getStatusBadge(item.item_status)}
-                          {getServiceBadge(item.item_service)}
-                          <span className="text-[10px] font-medium text-gray-600 bg-gray-100 px-2 py-0.5 rounded-md dark:text-neutral-400 dark:bg-neutral-800">
-                            {item.parent_category || 'Track'}
-                          </span>
+                        {/* Grouped Information Column */}
+                        <div className="min-w-0 flex-1 space-y-1">
+                          {/* Row 1: Track Title + Status Badge */}
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 truncate">
+                              {item.name}
+                            </p>
+                            <div className="shrink-0 scale-95 origin-left">
+                              {getStatusBadge(item.item_status, false)}
+                            </div>
+                          </div>
+
+                          {/* Row 2: Artist & Album info */}
+                          <div className="flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400 truncate">
+                            <span className="font-medium text-neutral-700 dark:text-neutral-200 truncate">
+                              {item.artist}
+                            </span>
+                            {item.album && (
+                              <>
+                                <span className="text-neutral-300 dark:text-neutral-600">•</span>
+                                <span className="inline-flex items-center gap-1 truncate text-neutral-500 dark:text-neutral-400">
+                                  <Disc className="w-3 h-3 text-neutral-400 shrink-0" />
+                                  <span className="truncate">Part of Album: {item.album}</span>
+                                </span>
+                              </>
+                            )}
+                            {item.playlist_name && (
+                              <>
+                                <span className="text-neutral-300 dark:text-neutral-600 hidden sm:inline">•</span>
+                                <span className="hidden sm:inline-flex items-center gap-1 text-neutral-400 truncate max-w-[160px]">
+                                  <Layers className="w-3 h-3 text-neutral-400 shrink-0" />
+                                  <span className="truncate">Part of Playlist: {item.playlist_name}</span>
+                                </span>
+                              </>
+                            )}
+                          </div>
+
+                          {/* Row 3: Cohesive Badge Group (Source, Format/Bitrate, Size, Profile) */}
+                          <div className="flex items-center gap-1.5 flex-wrap pt-0.5 text-[11px]">
+                            {/* Service Source Badge */}
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 border border-neutral-200/60 dark:border-neutral-700/60 text-neutral-700 dark:text-neutral-300 font-medium">
+                              <span
+                                className="w-1.5 h-1.5 rounded-full"
+                                style={{ backgroundColor: serviceInfo.color }}
+                              />
+                              {serviceInfo.name}
+                            </span>
+
+                            {/* Audio Codec & Bitrate */}
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 border border-neutral-200/60 dark:border-neutral-700/60 text-neutral-700 dark:text-neutral-300 font-mono">
+                              <Sliders className="w-3 h-3 text-neutral-400" />
+                              {item.download_format != "" ? `${item.download_format}`:`Best Source`}
+                            </span>
+
+                            {/* File Size Badge */}
+                            {item.file_size && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 border border-neutral-200/60 dark:border-neutral-700/60 text-neutral-600 dark:text-neutral-400 font-mono">
+                                {Math.floor((Number(item.file_size) / 1024) / 1024)} MB
+                              </span>
+                            )}
+
+                            {/* Target Profile */}
+                            <span className="hidden md:inline-flex items-center px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 border border-neutral-200/60 dark:border-neutral-700/60 text-neutral-500 dark:text-neutral-400 font-mono">
+                              {item.download_profile.name || activeProfile}
+                            </span>
+                          </div>
                         </div>
-                        {item.item_status === 'Failed' && item.error && (
-                          <p className="mt-2 line-clamp-2 text-xs text-red-600 dark:text-red-400" title={item.error}>
-                            {item.error}
-                          </p>
+                      </div>
+
+                      {/* Center: Live Progress Bar & Transfer State (NO PATH) */}
+                      <div className="w-full lg:w-64 xl:w-72 shrink-0 flex flex-col justify-center gap-1.5 px-1 py-1">
+                        {/* Status Header above Progress Bar */}
+                        <div className="flex items-center justify-between text-xs">
+                          {isDownloading ? (
+                            <>
+                              <span className="font-mono text-xs font-bold text-neutral-800 dark:text-neutral-200">
+                                {item.progress}%{" "}
+                              </span>
+                            </>
+                          ) : isDownloaded ? (
+                            <>
+                              <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium text-xs">
+                                <Check className="w-3.5 h-3.5" /> Ready
+                              </span>
+                              <span className="font-mono text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                                100%
+                              </span>
+                            </>
+                          ) : isFailed ? (
+                            <>
+                              <span
+                                className="text-red-500 font-medium text-xs flex items-center gap-1 truncate max-w-[170px]"
+                                title={item.error || "Download error"}
+                              >
+                                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                                {item.error || "Failed"}
+                              </span>
+                              <span className="font-mono text-xs font-semibold text-red-500">
+                                {item.progress || 0}%
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400">
+                                <Clock className="w-3.5 h-3.5" />
+                                {item.item_status === "Paused" ? "Paused" : "Queued"}
+                              </span>
+                              <span className="font-mono text-xs text-neutral-400">
+                                {item.item_status === "Paused" ? `${item.progress}%` : "0%"}
+                              </span>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Progress Bar (Always shown) */}
+                        <div className="w-full bg-neutral-200 dark:bg-neutral-800 h-2 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-300 ${
+                              isDownloading
+                                ? "bg-amber-500 dark:bg-amber-400"
+                                : isDownloaded
+                                ? "bg-emerald-500 dark:bg-emerald-400"
+                                : isFailed
+                                ? "bg-red-500 dark:bg-red-400"
+                                : "bg-neutral-300 dark:bg-neutral-700"
+                            }`}
+                            style={{
+                              width: `${
+                                isDownloaded
+                                  ? 100
+                                  : isFailed
+                                  ? Math.max(item.progress || 0, 15)
+                                  : isDownloading
+                                  ? item.progress
+                                  : item.item_status === "Paused"
+                                  ? item.progress
+                                  : 0
+                              }%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Right: Inline Action Buttons */}
+                      <div className="flex items-center gap-2 shrink-0 justify-end pt-2 lg:pt-0 border-t lg:border-t-0 border-neutral-100 dark:border-neutral-800">
+                        {isDownloaded && (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            label="Save"
+                            icon={<FileDown className="w-3.5 h-3.5" />}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              downloadFile(item);
+                            }}
+                            id={`btn-row-save-${item.local_id}`}
+                          />
+                        )}
+
+                        {isFailed && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            label="Retry"
+                            icon={<RotateCcw className="w-3.5 h-3.5" />}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAction(item.local_id, "retry");
+                            }}
+                            id={`btn-row-retry-${item.local_id}`}
+                          />
+                        )}
+
+                        {isDownloading && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            label="Cancel"
+                            icon={<XCircle className="w-3.5 h-3.5" />}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAction(item.local_id, "cancel");
+                            }}
+                            id={`btn-row-cancel-${item.local_id}`}
+                          />
+                        )}
+
+                        {/* Open Side Detail Panel for this item */}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          label="Details"
+                          icon={<PanelRightOpen className="w-3.5 h-3.5" />}
+                          onClick={(e) => handleOpenDetails(e, item.local_id)}
+                          id={`btn-row-details-${item.local_id}`}
+                        />
+
+                        {/* Quick Delete */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onAction(item.local_id, "delete");
+                          }}
+                          className="p-1.5 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-400 hover:text-red-500 dark:hover:text-red-400 transition cursor-pointer"
+                          title="Remove from queue"
+                          aria-label={`Remove ${item.name} from queue`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                {/* COMPACT ROW VIEW: Shown when side detail panel is OPEN */}
+                return (
+                  <div
+                    key={item.local_id}
+                    onClick={() => handleItemClick(item.local_id)}
+                    id={`queue-item-row-${item.local_id}`}
+                    className={`group relative flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer select-none ${
+                      isFocused
+                        ? "bg-neutral-50 dark:bg-neutral-800/90 border-emerald-500/80 dark:border-emerald-500/80 shadow-xs ring-1 ring-emerald-500/30"
+                        : "bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-600"
+                    }`}
+                  >
+                    {/* Checkbox for batch selection */}
+                    <button
+                      type="button"
+                      onClick={(e) => toggleSelectItem(e, item.local_id)}
+                      className="text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 cursor-pointer p-0.5 shrink-0"
+                      aria-label={`Select ${item.name}`}
+                    >
+                      {isSelectedInBatch ? (
+                        <CheckSquare className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                      ) : (
+                        <Square className="w-4 h-4" />
+                      )}
+                    </button>
+
+                    {/* Queue number */}
+                    <span className="text-[11px] font-mono text-neutral-400 dark:text-neutral-500 w-5 text-right shrink-0">
+                      #{queueNum}
+                    </span>
+
+                    {/* Artwork with service indicator dot */}
+                    <div className="relative w-10 h-10 rounded-lg overflow-hidden bg-neutral-100 dark:bg-neutral-800 shrink-0 border border-neutral-200/60 dark:border-neutral-700/60 shadow-2xs">
+                      <img
+                        src={
+                          item.thumbnail ||
+                          "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=120&auto=format&fit=crop&q=80"
+                        }
+                        alt={item.name}
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                      <span
+                        className="absolute top-1 left-1 w-2 h-2 rounded-full ring-1 ring-white/80 dark:ring-black/80"
+                        style={{ backgroundColor: serviceInfo.color }}
+                        title={serviceInfo.name}
+                      />
+                    </div>
+
+                    {/* Title, Artist, Status, Format */}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-neutral-900 dark:text-neutral-100 truncate">
+                          {item.name}
+                        </p>
+                        <div className="shrink-0 scale-90 origin-right">
+                          {getStatusBadge(item.item_status, true)}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-400">
+                        <span className="truncate">{item.artist}</span>
+                        {isDownloading ? (
+                          <span className="font-mono text-amber-500 font-medium shrink-0">
+                            {item.progress}%
+                          </span>
+                        ) : isDownloaded ? (
+                          <span className="font-mono text-emerald-600 dark:text-emerald-400 shrink-0">
+                            100%
+                          </span>
+                        ) : (
+                          <span className="font-mono text-neutral-400 shrink-0">
+                            {item.target_format || ""}
+                          </span>
                         )}
                       </div>
                     </div>
 
-                    {/* Right: Action Buttons (Top Right) */}
-                    <div className="flex items-center justify-end gap-1 shrink-0 -mt-1 -mr-2">
-                      {/* Open Button */}
-                      {(config?.download_open_btn ?? true) && (
-                        <button
-                          onClick={() => handleOpenClick(item)}
-                          disabled={!isCompleted}
-                          className={`${iconBtnClass} text-green-600 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 focus:ring-green-500/20`}
-                          title="Open file / Play"
-                        >
-                          <Play className="w-5 h-5 fill-current" />
-                        </button>
-                      )}
-
-                      {/* Locate Button */}
-                      {(config?.download_locate_btn ?? true) && (
-                        <button
-                          onClick={() => handleLocateClick(item)}
-                          className={`${iconBtnClass} text-gray-500 hover:bg-gray-100 dark:text-neutral-400 dark:hover:bg-neutral-800 focus:ring-gray-500/20`}
-                          title="Locate folder"
-                        >
-                          <FolderOpen className="w-5 h-5" />
-                        </button>
-                      )}
-
-                      {/* Copy Link Button */}
-                      {(config?.download_copy_btn ?? true) && (
-                        <button
-                          onClick={() => handleCopyLink(item)}
-                          className={`${iconBtnClass} ${
-                            copiedId === item.local_id 
-                              ? 'text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-900/20' 
-                              : 'text-gray-500 hover:bg-gray-100 dark:text-neutral-400 dark:hover:bg-neutral-800'
-                          } focus:ring-gray-500/20`}
-                          title="Copy file path"
-                        >
-                          {copiedId === item.local_id ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
-                        </button>
-                      )}
-
-                      {/* Delete / Cancel Button */}
-  {(config?.download_delete_btn && (item.item_status === "Downloaded" || item.item_status === "Already Exists" || item.item_status === "Cancelled")) && (
-                        <button
-                          onClick={() => onAction(item.local_id, 'delete')}
-                          className={`${iconBtnClass} text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 focus:ring-red-500/20`}
-                          title="Remove from queue"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                      )}
-                      {(item.item_status === "Downloading" || item.item_status === "Paused") && (
-                        <button
-                          onClick={() => onAction(item.local_id, 'cancel')}
-                          className={`${iconBtnClass} flex items-center gap-1.5 px-3 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 focus:ring-red-500/20`}
-                          title="Cancel download"
-                          aria-label={`Cancel download for ${item.name || 'current track'}`}
-                        >
-                          <XCircle className="w-5 h-5" />
-                          <span className="hidden sm:inline text-xs font-medium">Cancel</span>
-                        </button>
-                      )}
-
-                      {item.item_status === "Waiting" && (
-                        <>
-                          <button
-                            onClick={() => {
-                              const waiting = queue.filter((entry) => entry.item_status === "Waiting").map((entry) => entry.local_id);
-                              const index = waiting.indexOf(item.local_id);
-                              if (index > 0) moveQueueItem(item.local_id, waiting[index - 1]);
-                            }}
-                            disabled={queue.filter((entry) => entry.item_status === "Waiting").findIndex((entry) => entry.local_id === item.local_id) <= 0}
-                            className={`${iconBtnClass} text-gray-500 hover:bg-gray-100 dark:text-neutral-400 dark:hover:bg-neutral-800`}
-                            title="Move priority up"
-                          ><ArrowUp className="h-4 w-4" /></button>
-                          <button
-                            onClick={() => {
-                              const waiting = queue.filter((entry) => entry.item_status === "Waiting").map((entry) => entry.local_id);
-                              const index = waiting.indexOf(item.local_id);
-                              if (index >= 0 && index < waiting.length - 1) moveQueueItem(item.local_id, waiting[index + 1]);
-                            }}
-                            disabled={queue.filter((entry) => entry.item_status === "Waiting").findIndex((entry) => entry.local_id === item.local_id) === queue.filter((entry) => entry.item_status === "Waiting").length - 1}
-                            className={`${iconBtnClass} text-gray-500 hover:bg-gray-100 dark:text-neutral-400 dark:hover:bg-neutral-800`}
-                            title="Move priority down"
-                          ><ArrowDown className="h-4 w-4" /></button>
-                        </>
-                      )}
-                      
-                      {/* Retry Button */}
-                      {(item.item_status === "Failed" || item.item_status === "Cancelled" || item.item_status === "Unavailable" || item.item_status === "Waiting") && (
-                        <button
-                          onClick={() => onAction(item.local_id, 'retry')}
-                          className={`${iconBtnClass} text-orange-600 hover:bg-orange-50 dark:text-orange-400 dark:hover:bg-orange-900/20 focus:ring-orange-500/20`}
-                          title="Retry"
-                        >
-                          <RefreshCw className="w-5 h-5" />
-                        </button>
-                      )}
-
-                      {/* Download Button */}
-                      <button
-                        onClick={() => handleDownloadFile(item)}
-                        disabled={!isCompleted}
-                        className={`${iconBtnClass} ${
-                          isCompleted 
-                            ? 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 focus:ring-blue-500/20' 
-                            : 'text-gray-400 dark:text-neutral-600'
-                        }`}
-                        title="Download File"
-                      >
-                        <Download className="w-5 h-5" />
-                      </button>
-                    </div>
-
+                    {/* Active chevron indicator */}
+                    <ChevronRight
+                      className={`w-4 h-4 shrink-0 transition ${
+                        isFocused
+                          ? "text-emerald-500 transform translate-x-0.5"
+                          : "text-neutral-300 dark:text-neutral-600 opacity-0 group-hover:opacity-100"
+                      }`}
+                    />
                   </div>
+                );
+              })}
+            </div>
+          </div>
 
-                  {/* Bottom Row: Path, Metrics & Expanded Progress Bar */}
-                  <div className="flex flex-col gap-2.5 w-full mt-1">
-                    
-                    
+          {/* RIGHT PANEL: Collapsible Side View with Item Details & Progress */}
+          {showSidePanel && (
+            <div
+              className="lg:col-span-6 xl:col-span-6 sticky top-4 animate-in fade-in slide-in-from-right-2 duration-200"
+              id="queue-item-detail-panel"
+            >
+              {selectedItem ? (
+                <Card padding={5} elevation="low" id={`detail-card-${selectedItem.local_id}`}>
+                  {(() => {
+                    const serviceInfo = getServiceInfo(selectedItem.item_service);
+                    const isDownloading = selectedItem.item_status === "Downloading";
+                    const isDownloaded =
+                      selectedItem.item_status === "Downloaded" ||
+                      selectedItem.item_status === "Already Exists";
+                    const isFailed = selectedItem.item_status === "Failed";
+                    const absoluteIndex = queue.findIndex(
+                      (q) => q.local_id === selectedItem.local_id
+                    );
+                    const queueNum = absoluteIndex + 1;
 
-                    {/* Detailed Metrics Layout */}
-                    <div className="flex items-center justify-between text-xs text-gray-500 dark:text-neutral-400 font-medium px-0.5">
-                      <div className="flex items-center gap-2 md:gap-3">
-                        <span className="uppercase tracking-wider">{item.format}</span>
-                        <span className="w-1 h-1 rounded-full bg-gray-300 dark:bg-neutral-700"></span>
-                        <span className="bg-gray-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-gray-700 dark:text-neutral-300 font-mono text-[10px] tracking-wide">
-                          {item.bitrate}
-                        </span>
-                        <span className="w-1 h-1 rounded-full bg-gray-300 dark:bg-neutral-700"></span>
-                        <span>{Number.isFinite(Number(item.file_size)) ? `${(Number(item.file_size) / (1024 * 1024)).toFixed(1)} MB` : '— MB'}</span>
-                        {item.download_speed && <><span className="w-1 h-1 rounded-full bg-gray-300 dark:bg-neutral-700"></span><span>{item.download_speed}</span></>}
-                        {isDownloading && <><span className="w-1 h-1 rounded-full bg-gray-300 dark:bg-neutral-700"></span><span>ETA {formatEta(item.eta_seconds)}</span></>}
+                    return (
+                      <div className="space-y-5">
+                        {/* Header bar of Side Detail Panel with Close / Collapse Button */}
+                        <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-800 pb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300">
+                              #{queueNum}
+                            </span>
+                            {getStatusBadge(selectedItem.item_status)}
+                            <div
+                              className="px-2 py-0.5 rounded-md text-[10px] font-bold text-black shadow-xs flex items-center gap-1 "
+                              style={{ backgroundColor: serviceInfo.color }}
+                            >
+                              <span>{serviceInfo.name}</span>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setShowSidePanel(false)}
+                            className="p-1 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 transition cursor-pointer flex items-center gap-1 text-xs"
+                            title="Collapse side details view"
+                            aria-label="Collapse side details view"
+                          >
+                            <PanelRightClose className="w-4 h-4" />
+                            <span className="hidden sm:inline text-[11px]">Collapse</span>
+                          </button>
+                        </div>
+
+                        {/* Media Hero: Artwork, Name, Artist, Album */}
+                        <div className="flex items-start gap-4">
+                          <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-neutral-100 dark:bg-neutral-800 shrink-0 border border-neutral-200 dark:border-neutral-700 shadow-sm">
+                            <img
+                              src={
+                                selectedItem.thumbnail ||
+                                "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=240&auto=format&fit=crop&q=80"
+                              }
+                              alt={selectedItem.name}
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                            
+                          </div>
+
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <h3 className="text-base font-bold text-neutral-900 dark:text-neutral-100 leading-snug">
+                              {selectedItem.name}
+                            </h3>
+                            <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5">
+                              <User className="w-3.5 h-3.5 text-neutral-400" />
+                              <span>{selectedItem.artist}</span>
+                            </p>
+                            {selectedItem.album && (
+                              <p className="text-xs text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
+                                <Disc className="w-3.5 h-3.5 text-neutral-400" />
+                                <span>{selectedItem.album}</span>
+                              </p>
+                            )}
+                            {selectedItem.playlist_name && (
+                              <p className="text-xs text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
+                                <Layers className="w-3.5 h-3.5 text-neutral-400" />
+                                <span>Playlist: {selectedItem.playlist_name}</span>
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Download Progress & Transfer Details */}
+                        <div className="p-3.5 rounded-xl bg-neutral-50 dark:bg-neutral-800 border border-neutral-200/80 dark:border-neutral-700 space-y-2.5">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-semibold text-neutral-700 dark:text-neutral-300">
+                              Download Progress
+                            </span>
+                            <span className="font-mono font-bold text-neutral-900 dark:text-neutral-100">
+                              {selectedItem.progress}%
+                            </span>
+                          </div>
+
+                          <ProgressBar
+                            label={`Progress for ${selectedItem.name}`}
+                            value={selectedItem.progress}
+                            max={100}
+                            isLabelHidden={true}
+                            variant={isFailed ? "error" : isDownloaded ? "success" : "accent"}
+                          />
+
+                          <div className="flex items-center justify-between text-[11px] text-neutral-500 dark:text-neutral-400">
+                            {isDownloaded ? (
+                              <span className="text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                                <Check className="w-3.5 h-3.5" /> File complete and saved to disk
+                              </span>
+                            ) : isFailed ? (
+                              <span className="text-red-500 font-medium flex items-center gap-1">
+                                <AlertCircle className="w-3.5 h-3.5" /> Download stopped due to error
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1 text-neutral-400">
+                                <Clock className="w-3.5 h-3.5" /> {selectedItem.item_status}
+                              </span>
+                            )}
+
+                            {selectedItem.file_size && (
+                              <span className="font-mono font-medium">{Math.floor((Number(selectedItem.file_size) / 1024) / 1024)}</span>
+                            )}
+                          </div>
+
+                          {/* Error message if failed */}
+                          {isFailed && selectedItem.error && (
+                            <div className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900/60 text-xs text-red-600 dark:text-red-400 flex items-start gap-2">
+                              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                              <div>
+                                <p className="font-semibold">Download Failure Reason:</p>
+                                <p className="mt-0.5 font-mono text-[11px]">{selectedItem.error}</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Technical Specifications Grid */}
+                        <div className="space-y-2">
+                          <h4 className="text-xs font-semibold text-neutral-900 dark:text-neutral-100 flex items-center gap-1.5">
+                            <Sliders className="w-3.5 h-3.5 text-neutral-500" />
+                            Technical Specs & Profile Information
+                          </h4>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                            <div className="p-2.5 rounded-lg bg-neutral-100/70 dark:bg-neutral-800/60 border border-neutral-200/50 dark:border-neutral-700/50">
+                              <span className="text-[10px] text-neutral-400 uppercase font-bold tracking-wider block">
+                                Catalog Service
+                              </span>
+                              <span className="font-medium text-neutral-800 dark:text-neutral-200 mt-0.5 block">
+                                {serviceInfo.name}
+                              </span>
+                            </div>
+
+                            <div className="p-2.5 rounded-lg bg-neutral-100/70 dark:bg-neutral-800/60 border border-neutral-200/50 dark:border-neutral-700/50">
+                              <span className="text-[10px] text-neutral-400 uppercase font-bold tracking-wider block">
+                                Audio Codec
+                              </span>
+                              <span className="font-mono font-medium text-neutral-800 dark:text-neutral-200 mt-0.5 block">
+                                {selectedItem.target_format || "FLAC Lossless"}
+                              </span>
+                            </div>
+
+                            <div className="p-2.5 rounded-lg bg-neutral-100/70 dark:bg-neutral-800/60 border border-neutral-200/50 dark:border-neutral-700/50">
+                              <span className="text-[10px] text-neutral-400 uppercase font-bold tracking-wider block">
+                                Bitrate & Depth
+                              </span>
+                              <span className="font-mono font-medium text-neutral-800 dark:text-neutral-200 mt-0.5 block">
+                                {selectedItem.bitrate + "kbps"}
+                              </span>
+                            </div>
+
+                            <div className="p-2.5 rounded-lg bg-neutral-100/70 dark:bg-neutral-800/60 border border-neutral-200/50 dark:border-neutral-700/50">
+                              <span className="text-[10px] text-neutral-400 uppercase font-bold tracking-wider block">
+                                Item Type
+                              </span>
+                              <span className="font-medium text-neutral-800 dark:text-neutral-200 mt-0.5 capitalize block">
+                                {selectedItem.item_type || "track"}
+                              </span>
+                            </div>
+
+                            <div className="p-2.5 rounded-lg bg-neutral-100/70 dark:bg-neutral-800/60 border border-neutral-200/50 dark:border-neutral-700/50">
+                              <span className="text-[10px] text-neutral-400 uppercase font-bold tracking-wider block">
+                                Profile Target
+                              </span>
+                              <span className="font-medium text-neutral-800 dark:text-neutral-200 mt-0.5 block truncate">
+                                {selectedItem.download_profile.name || activeProfile}
+                              </span>
+                            </div>
+
+                            <div className="p-2.5 rounded-lg bg-neutral-100/70 dark:bg-neutral-800/60 border border-neutral-200/50 dark:border-neutral-700/50">
+                              <span className="text-[10px] text-neutral-400 uppercase font-bold tracking-wider block">
+                                Item ID
+                              </span>
+                              <span
+                                className="font-mono text-[11px] text-neutral-800 dark:text-neutral-200 truncate mt-0.5 block"
+                                title={selectedItem.item_id}
+                              >
+                                {selectedItem.item_id || selectedItem.local_id}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Destination File Path */}
+                        {selectedItem.file_path && (
+                          <div className="space-y-1">
+                            <span className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5">
+                              <Folder className="w-3.5 h-3.5 text-neutral-400" />
+                              Storage Destination
+                            </span>
+                            <div className="p-2 rounded-lg bg-neutral-100/80 dark:bg-neutral-800/80 border border-neutral-200/60 dark:border-neutral-700/60 font-mono text-[11px] text-neutral-600 dark:text-neutral-300 break-all select-all">
+                              {selectedItem.file_path}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* URL / Stream Source */}
+                        {selectedItem.item_url && (
+                          <div className="space-y-1">
+                            <span className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5">
+                              <ExternalLink className="w-3.5 h-3.5 text-neutral-400" />
+                              Stream Source URL
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                readOnly
+                                value={selectedItem.item_url}
+                                className="flex-1 px-2.5 py-1.5 rounded-lg bg-neutral-100/80 dark:bg-neutral-800/80 border border-neutral-200 dark:border-neutral-700 font-mono text-[11px] text-neutral-600 dark:text-neutral-300 truncate"
+                              />
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                label={copiedId === selectedItem.local_id ? "Copied" : "Copy"}
+                                icon={
+                                  copiedId === selectedItem.local_id ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-500" />
+                                  ) : (
+                                    <Copy className="w-3.5 h-3.5" />
+                                  )
+                                }
+                                onClick={() => copyUrl(selectedItem.local_id, selectedItem.item_url)}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Actions Footer */}
+                        <div className="flex items-center justify-between gap-2 pt-3 border-t border-neutral-200 dark:border-neutral-800 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            {isDownloaded && (
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                label="Download File"
+                                icon={<FileDown className="w-3.5 h-3.5" />}
+                                onClick={() => downloadFile(selectedItem)}
+                                id={`btn-detail-download-${selectedItem.local_id}`}
+                              />
+                            )}
+
+                            {isFailed && (
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                label="Retry Download"
+                                icon={<RotateCcw className="w-3.5 h-3.5" />}
+                                onClick={() => onAction(selectedItem.local_id, "retry")}
+                                id={`btn-detail-retry-${selectedItem.local_id}`}
+                              />
+                            )}
+
+                            {isDownloading && (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                label="Cancel Download"
+                                icon={<XCircle className="w-3.5 h-3.5" />}
+                                onClick={() => onAction(selectedItem.local_id, "cancel")}
+                                id={`btn-detail-cancel-${selectedItem.local_id}`}
+                              />
+                            )}
+                          </div>
+
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            label="Remove From Queue"
+                            icon={<Trash2 className="w-3.5 h-3.5" />}
+                            onClick={() => onAction(selectedItem.local_id, "delete")}
+                            id={`btn-detail-delete-${selectedItem.local_id}`}
+                          />
+                        </div>
                       </div>
-                      <span className="text-xs font-mono tabular-nums text-gray-600 dark:text-neutral-300">
-                        {Math.round(item.progress)}%
-                      </span>
-                    </div>
-
-                    {/* Full Width Progress Bar */}
-                    <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-neutral-800 overflow-hidden relative">
-                      <div
-                        className={`h-full rounded-full transition-all duration-500 ease-out ${
-                          isCompleted
-                            ? 'bg-green-500'
-                            : isDownloading
-                              ? 'bg-blue-500'
-                              : item.item_status === 'Failed'
-                                ? 'bg-red-500'
-                                : 'bg-orange-500'
-                        }`}
-                        style={{ width: `${item.progress}%` }}
-                      />
-                    </div>
-                  </div>
-
-                </div>
-              );
-            })}
+                    );
+                  })()}
+                </Card>
+              ) : (
+                <Card padding={6} elevation="low">
+                  <EmptyState
+                    title="No Item Selected"
+                    description="Select a download item from the left panel to inspect full audio specifications, path routing, and actions."
+                    icon={<Info className="w-8 h-8 text-neutral-400" />}
+                  />
+                </Card>
+              )}
             </div>
           )}
         </div>
       )}
-
     </div>
   );
 };

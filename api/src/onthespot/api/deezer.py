@@ -2,14 +2,16 @@ import html.parser
 import json
 import random
 import re
-import requests
 import uuid
 from binascii import a2b_hex, b2a_hex
+
+import requests
 from Cryptodome.Cipher import AES, Blowfish
 from Cryptodome.Hash import MD5
+
 from ..constants import HTTP_TIMEOUT
 from ..otsconfig import config
-from ..runtimedata import get_logger, account_pool
+from ..runtimedata import account_pool, get_logger
 from ..utils import conv_list_format, make_call
 
 logger = get_logger("api.deezer")
@@ -81,16 +83,12 @@ def deezer_get_playlist_data(_, playlist_id):
     return playlist_name, playlist_by, track_ids
 
 
-def deezer_get_track_metadata(_, item_id):
+def deezer_get_track_metadata(_, item_id, item):
     logger.info(f"Get track info for: '{item_id}'")
 
     track_data = make_call(f"{BASE_URL}/track/{item_id}")
-    album_data = make_call(
-        f"{BASE_URL}/album/{track_data.get('album', {}).get('id')}?limit=10000"
-    )
-    album_tracks = make_call(
-        f"{BASE_URL}/album/{track_data.get('album', {}).get('id')}/tracks?limit=10000"
-    )
+    album_data = make_call(f"{BASE_URL}/album/{track_data.get('album', {}).get('id')}?limit=10000")
+    album_tracks = make_call(f"{BASE_URL}/album/{track_data.get('album', {}).get('id')}/tracks?limit=10000")
     # album_page = make_call(f"https://www.deezer.com/album/{track_data.get('album', {}).get('id')}", text=True)
 
     # Fetch track_number
@@ -184,9 +182,7 @@ def calcbfkey(songid):
     key = b"g4el58wc0zvf9na1"
     songid_md5 = md5hex(songid.encode())
 
-    decrypt_key = "".join(
-        chr(songid_md5[i] ^ songid_md5[i + 16] ^ key[i]) for i in range(16)
-    )
+    decrypt_key = "".join(chr(songid_md5[i] ^ songid_md5[i + 16] ^ key[i]) for i in range(16))
     return decrypt_key
 
 
@@ -247,9 +243,7 @@ def deezer_login_user(account):
     try:
         if uuid == "public_deezer":
             # I have no idea why rentry 403s every scraping trick I've tried
-            ia_url = (
-                "http://archive.org/wayback/available?url=https://rentry.co/firehawk52"
-            )
+            ia_url = "http://archive.org/wayback/available?url=https://rentry.co/firehawk52"
             response = requests.get(ia_url, timeout=HTTP_TIMEOUT)
             if response.status_code != 200:
                 logger.error(
@@ -267,9 +261,7 @@ def deezer_login_user(account):
 
             html_content = requests.get(url, timeout=HTTP_TIMEOUT).text
 
-            table_match = re.search(
-                r'<table class="ntable">(.*?)</table>', html_content, re.DOTALL
-            )
+            table_match = re.search(r'<table class="ntable">(.*?)</table>', html_content, re.DOTALL)
             if table_match:
                 table_content = table_match.group(1)
                 rows = re.findall(r"<tr>(.*?)</tr>", table_content, re.DOTALL)
@@ -325,9 +317,7 @@ def deezer_login_user(account):
                 "bitrate": bitrate,
                 "login": {
                     "arl": arl,
-                    "license_token": user_data["results"]["USER"]["OPTIONS"][
-                        "license_token"
-                    ],
+                    "license_token": user_data["results"]["USER"]["OPTIONS"]["license_token"],
                     "session": session,
                 },
             }
@@ -370,9 +360,7 @@ def deezer_get_search_results(_, search_term, content_types):
     search_results = []
 
     if "track" in content_types:
-        track_search = requests.get(
-            track_url, params=params, timeout=HTTP_TIMEOUT
-        ).json()
+        track_search = requests.get(track_url, params=params, timeout=HTTP_TIMEOUT).json()
         for track in track_search["data"]:
             search_results.append(
                 {
@@ -387,9 +375,7 @@ def deezer_get_search_results(_, search_term, content_types):
             )
 
     if "album" in content_types:
-        album_search = requests.get(
-            album_url, params=params, timeout=HTTP_TIMEOUT
-        ).json()
+        album_search = requests.get(album_url, params=params, timeout=HTTP_TIMEOUT).json()
         for album in album_search["data"]:
             search_results.append(
                 {
@@ -404,9 +390,7 @@ def deezer_get_search_results(_, search_term, content_types):
             )
 
     if "artist" in content_types:
-        artist_search = requests.get(
-            artist_url, params=params, timeout=HTTP_TIMEOUT
-        ).json()
+        artist_search = requests.get(artist_url, params=params, timeout=HTTP_TIMEOUT).json()
         for artist in artist_search["data"]:
             search_results.append(
                 {
@@ -421,9 +405,7 @@ def deezer_get_search_results(_, search_term, content_types):
             )
 
     if "playlist" in content_types:
-        playlist_search = requests.get(
-            playlist_url, params=params, timeout=HTTP_TIMEOUT
-        ).json()
+        playlist_search = requests.get(playlist_url, params=params, timeout=HTTP_TIMEOUT).json()
         for playlist in playlist_search["data"]:
             search_results.append(
                 {

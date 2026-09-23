@@ -1,7 +1,20 @@
-import React, { useRef, useState } from 'react';
-import { Terminal, RefreshCw, Search, Trash2, Download } from 'lucide-react';
-import { LogEntry } from '../types';
-import { getTargetBackendUrl } from '../lib/api';
+import { Badge } from "@astryxdesign/core/Badge";
+import { Button } from "@astryxdesign/core/Button";
+import { Card } from "@astryxdesign/core/Card";
+import { IconButton } from "@astryxdesign/core/IconButton";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import {
+  Check,
+  Copy,
+  Download,
+  Search,
+  Terminal,
+  Trash2,
+} from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { LogEntry } from "../types";
+import { PageHeader } from "./PageHeader";
 
 interface LogViewerProps {
   logs: LogEntry[];
@@ -9,138 +22,182 @@ interface LogViewerProps {
   onClear: () => void;
 }
 
-type LogLevelFilter = 'ALL' | 'INFO' | 'WARNING' | 'ERROR';
-
 export const LogViewer: React.FC<LogViewerProps> = ({
   logs,
-  onRefresh,
-  onClear
+  onClear,
 }) => {
-  const [levelFilter, setLevelFilter] = useState<LogLevelFilter>('ALL');
+  const [levelFilter, setLevelFilter] = useState<string>("ALL");
   const [search, setSearch] = useState("");
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
+  const logContainerRef = useRef<HTMLDivElement>(null);
 
-  const filteredLogs = logs.filter(l => {
-    if (levelFilter !== 'ALL' && l.level !== levelFilter) return false;
+  const filteredLogs = logs.filter((l) => {
+    if (levelFilter !== "ALL" && l.level !== levelFilter) return false;
     if (search.trim() && !l.message.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
 
-  const handleDownloadFile = () => {
-    const url = `${getTargetBackendUrl()}/logs/download`;
-    window.open(url, '_blank');
+  useEffect(() => {
+    if (logContainerRef.current) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    }
+  }, [filteredLogs]);
+
+  const handleExportLogs = () => {
+    const text = filteredLogs
+      .map((l) => `[${l.timestamp}] [${l.level}] ${l.service ? `(${l.service}) ` : ""}${l.message}`)
+      .join("\n");
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `onthespot-logs-${new Date().toISOString().slice(0, 10)}.log`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const getLevelBadge = (lvl: string) => {
-    const baseClass = "ots-log-badge text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider";
-    switch (lvl) {
-      case 'ERROR': 
-        return <span className={`${baseClass} ots-log-badge-error`}>Error</span>;
-      case 'WARNING': 
-        return <span className={`${baseClass} ots-log-badge-warning`}>Warn</span>;
-      default: 
-        return <span className={`${baseClass} ots-log-badge-info`}>Info</span>;
+  const handleCopyLogs = () => {
+    const text = filteredLogs
+      .map((l) => `[${l.timestamp}] [${l.level}] ${l.service ? `(${l.service}) ` : ""}${l.message}`)
+      .join("\n");
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const getLevelBadge = (level: string) => {
+    switch (level) {
+      case "ERROR":
+        return <Badge variant="error" label="Error" />;
+      case "WARNING":
+        return <Badge variant="warning" label="Warn" />;
+      default:
+        return <Badge variant="neutral" label="Info" />;
     }
   };
 
-  const iconBtnClass = "ots-icon-button";
-
   return (
-    <div className="spotify-fade-up ots-page flex h-[calc(100vh-170px)] flex-col font-sans">
-      {/* Material Card Surface */}
-      <div className="ots-panel flex h-full flex-col overflow-hidden shadow-xl shadow-black/10">
-        
-        {/* App Bar / Toolbar */}
-        <div className="px-4 py-4 md:px-6 border-b border-gray-100 dark:border-neutral-800/60 flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
-          
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-50 dark:bg-blue-500/10 rounded-full">
-              <Terminal className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-            </div>
-            <h2 className="text-lg font-medium text-gray-900 dark:text-neutral-100 tracking-tight">
-              Server Logs
-            </h2>
-          </div>
+    <div className="space-y-5" id="logs-view">
+      {/* Reusable PageHeader for Logs */}
+      <PageHeader
+        id="logs-page-header"
+        icon={<Terminal className="w-5 h-5" />}
+        title="Live Event Logs & Telemetry"
+        badge={{
+          label: `${filteredLogs.length} Events`,
+          variant: "neutral",
+        }}
+        description="Real-time output from scraper engines, ffmpeg transcoder threads, and network sessions"
+        actions={
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant="secondary"
+              size="sm"
+              label={copied ? "Copied!" : "Copy All"}
+              icon={
+                copied ? (
+                  <Check className="w-3.5 h-3.5 text-green-500" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )
+              }
+              onClick={handleCopyLogs}
+            />
 
-          {/* Actions & Search */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="ots-input relative flex w-full items-center px-4 md:w-64">
-              <Search className="w-4 h-4 text-gray-400 shrink-0" />
-              <input
-                type="text"
+            <Button
+              variant="secondary"
+              size="sm"
+              label="Export .log"
+              icon={<Download className="w-3.5 h-3.5" />}
+              onClick={handleExportLogs}
+            />
+
+            <IconButton
+              label="Clear all logs"
+              icon={<Trash2 className="w-3.5 h-3.5 text-red-500" />}
+              variant="ghost"
+              size="sm"
+              onClick={onClear}
+            />
+          </div>
+        }
+        bottomContent={
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="w-full md:w-72">
+              <TextInput
+                label="Search log messages"
+                isLabelHidden={true}
+                placeholder="Filter logs by keyword..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search logs..."
-                className="bg-transparent text-sm text-gray-900 dark:text-neutral-100 placeholder-gray-500 outline-none w-full ml-2"
+                onChange={(val) => setSearch(val)}
+                hasClear={true}
+                size="sm"
+                startIcon={<Search className="w-3.5 h-3.5 text-neutral-400" />}
               />
             </div>
 
-            <div className="flex items-center gap-1">
-              <button onClick={handleDownloadFile} className={iconBtnClass} title="Download Logs">
-                <Download className="w-5 h-5" />
-              </button>
-              <button onClick={onRefresh} className={iconBtnClass} title="Refresh Logs">
-                <RefreshCw className="w-5 h-5" />
-              </button>
-              <button onClick={onClear} className={iconBtnClass} title="Clear Buffer">
-                <Trash2 className="w-5 h-5" />
-              </button>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-neutral-500">Level:</span>
+              <SegmentedControl
+                label="Log level filter"
+                value={levelFilter}
+                onChange={(lvl) => setLevelFilter(lvl)}
+                size="sm"
+              >
+                <SegmentedControlItem value="ALL" label="All Levels" />
+                <SegmentedControlItem value="INFO" label="Info" />
+                <SegmentedControlItem value="WARNING" label="Warn" />
+                <SegmentedControlItem value="ERROR" label="Error" />
+              </SegmentedControl>
             </div>
           </div>
-        </div>
+        }
+      />
 
-        {/* Filter Chips */}
-        <div className="px-4 py-3 md:px-6 flex items-center gap-2 border-b border-gray-100 dark:border-neutral-800/60 overflow-x-auto no-scrollbar shrink-0 bg-gray-50/50 dark:bg-[#141414]">
-          {(['ALL', 'INFO', 'WARNING', 'ERROR'] as LogLevelFilter[]).map((lvl) => (
-            <button
-              key={lvl}
-              onClick={() => setLevelFilter(lvl)}
-              className={`ots-segment whitespace-nowrap ${
-                levelFilter === lvl
-                  ? 'ots-segment-active'
-                  : ''
-              }`}
-            >
-              {lvl}
-            </button>
-          ))}
-          <span className="text-sm text-gray-500 dark:text-neutral-500 ml-auto hidden sm:block">
-            {filteredLogs.length} of {logs.length} entries
-          </span>
-        </div>
-
-        {/* Log Lines Area */}
+      {/* Terminal View Container */}
+      <Card padding={0} elevation="low" id="terminal-card">
         <div
-          ref={scrollRef}
-          className="flex-1 overflow-y-auto p-4 md:p-6 bg-gray-50/30 dark:bg-[#0f0f0f] font-mono text-sm selection:bg-blue-200 dark:selection:bg-blue-900/50"
+          ref={logContainerRef}
+          className="h-[520px] overflow-y-auto p-4 space-y-1.5 bg-neutral-950 text-neutral-100 font-mono text-xs rounded-xl"
         >
           {filteredLogs.length === 0 ? (
-            <div className="h-full flex items-center justify-center text-gray-500 dark:text-neutral-500 font-sans">
-              No logs match filter "{levelFilter}" {search && `with term "${search}"`}.
+            <div className="h-full flex items-center justify-center text-neutral-500 text-xs">
+              No log messages match the current filter criteria.
             </div>
           ) : (
-            <div className="flex flex-col gap-1">
-              {[...filteredLogs].map((entry) => (
-                <div 
-                  key={entry.id} 
-                  className="flex items-start gap-3 py-1.5 px-2 rounded-md hover:bg-black/5 dark:hover:bg-white/5 transition-colors group break-words"
+            filteredLogs.map((log) => (
+              <div
+                key={log.id}
+                className="flex items-start gap-2.5 hover:bg-neutral-900/60 p-1 rounded transition"
+              >
+                <span className="text-neutral-500 text-[11px] shrink-0 select-none">
+                  {log.timestamp}
+                </span>
+
+                <div className="shrink-0">{getLevelBadge(log.level)}</div>
+
+                {log.service && (
+                  <span className="text-neutral-400 font-semibold shrink-0">
+                    [{log.service}]
+                  </span>
+                )}
+
+                <span
+                  className={`break-all leading-relaxed ${
+                    log.level === "ERROR"
+                      ? "text-red-400"
+                      : log.level === "WARNING"
+                      ? "text-amber-400"
+                      : "text-neutral-300"
+                  }`}
                 >
-                  <span className="text-gray-400 dark:text-neutral-600 select-none shrink-0 text-xs mt-0.5 w-[72px]">
-                    {entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '12:00:00'}
-                  </span>
-                  <span className="shrink-0 mt-[1px]">
-                    {getLevelBadge(entry.level)}
-                  </span>
-                  <span className="flex-1 text-gray-700 dark:text-neutral-300 leading-relaxed">
-                    {entry.message}
-                  </span>
-                </div>
-              ))}
-            </div>
+                  {log.message}
+                </span>
+              </div>
+            ))
           )}
         </div>
-
-      </div>
+      </Card>
     </div>
   );
 };
