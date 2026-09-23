@@ -1,5 +1,5 @@
 {
-  "version": "v2.0.0 Alpha 2",
+  "version": "v2.0.2 Beta 2",
   "debug_mode": false,
   "language_index": 0,
   "total_downloaded_items": 0,
@@ -49,14 +49,14 @@
       "id": "mp3-320",
       "name": "MP3 · 320 kbps",
       "format": "mp3",
-      "bitrate": "320k",
+      "bitrate": 320,
       "download_path": ""
     },
     {
       "id": "flac",
       "name": "FLAC · lossless",
       "format": "flac",
-      "bitrate": "1411k",
+      "bitrate": 1411,
       "download_path": ""
     }
   ],
@@ -121,7 +121,6 @@
   "download_queue_show_unavailable": true,
   "download_queue_show_completed": true,
   "audio_download_path": "/root/Music/OnTheSpot",
-  "track_file_format": "mp3",
   "track_path_formatter": "Tracks/{album_artist}/{year} {album}/{track_number}. {name}",
   "podcast_file_format": "mp3",
   "podcast_path_formatter": "Episodes/{album}/{name}",
@@ -133,10 +132,10 @@
   "extinf_label": "{playlist_number}. {artist} - {name}",
   "save_album_cover": false,
   "album_cover_format": "png",
-  "file_bitrate": "320k",
   "file_hertz": 44100,
   "use_custom_file_bitrate": false,
   "use_source_format": false,
+  "prefer_best_source_format": true,
   "download_lyrics": false,
   "only_download_synced_lyrics": false,
   "only_download_plain_lyrics": false,

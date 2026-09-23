@@ -1,1743 +1,881 @@
-import React, { useEffect, useState } from "react";
+import { Badge } from "@astryxdesign/core/Badge";
+import { Button } from "@astryxdesign/core/Button";
+import { Card } from "@astryxdesign/core/Card";
+import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { Switch } from "@astryxdesign/core/Switch";
+import { Tab, TabList } from "@astryxdesign/core/TabList";
+import { TextInput } from "@astryxdesign/core/TextInput";
 import {
-  Save,
-  RotateCcw,
-  Sliders,
-  Music,
-  Film,
-  Tag,
-  Search,
-  Eye,
   Cpu,
-  Check,
-  Loader2,
   Download,
-  Upload,
-  Palette,
-  Trash2,
-  Archive,
-  GripVertical,
+  Film,
+  Globe,
+  Key,
+  Music,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Server,
+  Sliders,
+  Tag
 } from "lucide-react";
-import {
-  CustomTheme,
-  CustomThemePalette,
-  DEFAULT_CUSTOM_THEME,
-  OTSConfig,
-  SavedCustomTheme,
-  THEME_PRESETS,
-  ThemeMode,
-  ThemePreset,
-} from "../types";
-import {
-  DownloadProfile,
-  exportBackup,
-  importBackup,
-  saveBackupFile,
-} from "../lib/api";
-import { translate } from "../lib/i18n";
-import { DownloadProfilesPanel } from "./DownloadProfilesPanel";
-import { UpdatePanel } from "./UpdatePanel";
+import React, { useState } from "react";
+import { getTargetBackendUrl, setTargetBackendUrl, testBackendConnection } from "../lib/api";
+import { DownloadProfile, OTSConfig } from "../types";
+import { PageHeader } from "./PageHeader";
+
+
+/* -------------------------------------------------------------------------- */
+/* SettingsPage Component                                                     */
+/* -------------------------------------------------------------------------- */
 
 interface SettingsPageProps {
-  initialSection?: SettingsSection;
-  config: OTSConfig | null;
+  initialTab?: string;
+  config: OTSConfig;
+  profiles: DownloadProfile[];
+  activeProfile: string;
   onUpdateValue: (key: string, value: any) => Promise<boolean>;
   onSave: () => Promise<boolean>;
   onReset: () => Promise<void>;
-  profiles: DownloadProfile[];
-  activeProfile: string;
-  onSaveProfile: (profile: DownloadProfile) => Promise<DownloadProfile | null>;
+  onActivateProfile: (profileId: string) => Promise<void>;
+  onSaveProfile: (profile: DownloadProfile) => Promise<DownloadProfile>;
   onDeleteProfile: (profileId: string) => Promise<boolean>;
-  onActivateProfile: (profileId: string) => Promise<boolean>;
-  themePreset: ThemePreset;
-  onThemeChange: (theme: ThemePreset) => Promise<void>;
-  themeMode: ThemeMode;
-  onThemeModeChange: (mode: ThemeMode) => Promise<void>;
-  customTheme: CustomTheme;
-  onCustomThemeChange: (theme: CustomTheme) => Promise<void>;
-  savedCustomThemes: SavedCustomTheme[];
-  onSaveCustomTheme: (name: string) => Promise<boolean>;
-  onLoadCustomTheme: (theme: SavedCustomTheme) => Promise<void>;
-  onDeleteCustomTheme: (id: string) => Promise<void>;
 }
 
-export type SettingsSection =
-  | "general"
-  | "audio"
-  | "profiles"
-  | "video"
-  | "metadata"
-  | "search"
-  | "display"
-  | "backup";
-
-type FormatterKey = "track_path_formatter" | "playlist_path_formatter";
-
-const APPLICATION_LANGUAGES = [
-  { value: "en_US", label: "English (United States)" },
-  { value: "en_GB", label: "English (United Kingdom)" },
-  { value: "es_ES", label: "Español (España)" },
-  { value: "fr_FR", label: "Français (France)" },
-  { value: "de_DE", label: "Deutsch (Deutschland)" },
-  { value: "it_IT", label: "Italiano (Italia)" },
-  { value: "nl_NL", label: "Nederlands (Nederland)" },
-  { value: "pl_PL", label: "Polski (Polska)" },
-  { value: "pt_BR", label: "Português (Brasil)" },
-  { value: "ja_JP", label: "日本語" },
-  { value: "ko_KR", label: "한국어" },
-  { value: "zh_CN", label: "简体中文" },
-  { value: "zh_TW", label: "繁體中文" },
-  { value: "pt_PT", label: "Português (Portugal)" },
-  { value: "tr_TR", label: "Türkçe (Türkiye)" },
-  { value: "uk_UA", label: "Українська" },
-] as const;
-
-const SETTINGS_NAV_ITEMS: Array<{
-  id: SettingsSection;
-  icon: React.ElementType;
-  label: string;
-}> = [
-  { id: "search", icon: Search, label: "API config" },
-  { id: "audio", icon: Music, label: "Audio Outputs" },
-  { id: "backup", icon: Archive, label: "Backup & Restore" },
-  { id: "display", icon: Eye, label: "Display Settings" },
-  { id: "profiles", icon: Download, label: "Download Profiles" },
-  { id: "general", icon: Cpu, label: "General & Workers" },
-  { id: "metadata", icon: Tag, label: "ID3 Tagging" },
-  { id: "video", icon: Film, label: "Video Media" },
-];
-
-const readSettingsNavOrder = (): SettingsSection[] => {
-  try {
-    const stored = JSON.parse(
-      window.localStorage.getItem("ots-settings-nav-order") || "[]",
-    );
-    if (Array.isArray(stored)) {
-      const valid = stored.filter((id): id is SettingsSection =>
-        SETTINGS_NAV_ITEMS.some((item) => item.id === id),
-      );
-      if (valid.length === SETTINGS_NAV_ITEMS.length) return valid;
-    }
-  } catch {
-    /* Use the default order. */
-  }
-  return SETTINGS_NAV_ITEMS.map((item) => item.id);
-};
-
 export const SettingsPage: React.FC<SettingsPageProps> = ({
-  initialSection,
+  initialTab,
   config,
+  profiles,
+  activeProfile,
   onUpdateValue,
   onSave,
   onReset,
-  profiles,
-  activeProfile,
-  onSaveProfile,
-  onDeleteProfile,
   onActivateProfile,
-  themePreset,
-  onThemeChange,
-  themeMode,
-  onThemeModeChange,
-  customTheme,
-  onCustomThemeChange,
-  savedCustomThemes,
-  onSaveCustomTheme,
-  onLoadCustomTheme,
-  onDeleteCustomTheme,
 }) => {
-  const [section, setSection] = useState<SettingsSection>(
-    initialSection || "general",
-  );
-  const [saving, setSaving] = useState(false);
-  const [savedSuccess, setSavedSuccess] = useState(false);
-  const [resetting, setResetting] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [customThemeName, setCustomThemeName] = useState("");
-  const [customThemeMessage, setCustomThemeMessage] = useState("");
-  const [backupMessage, setBackupMessage] = useState("");
-  const [formatterTarget, setFormatterTarget] = useState<FormatterKey>(
-    "track_path_formatter",
-  );
-  const [settingsNavOrder, setSettingsNavOrder] =
-    useState<SettingsSection[]>(readSettingsNavOrder);
-  const [editingSettingsNav, setEditingSettingsNav] = useState(false);
-  const [draggedSettingsNav, setDraggedSettingsNav] =
-    useState<SettingsSection | null>(null);
-  const activeCustomPalette = customTheme[themeMode];
+  const [activeTab, setActiveTab] = useState(initialTab || "general");
+  const [localBackendUrl, setLocalBackendUrl] = useState(getTargetBackendUrl());
+  const [isSavedNotice, setIsSavedNotice] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isTestingConn, setIsTestingConn] = useState(false);
+  const [connStatus, setConnStatus] = useState<"idle" | "connected" | "failed">("idle");
 
-  useEffect(() => {
-    if (initialSection) setSection(initialSection);
-  }, [initialSection]);
-
-  if (!config) {
-    return (
-      <div className="p-20 flex justify-center items-center text-gray-500 dark:text-neutral-500 font-sans text-sm">
-        <Loader2 className="w-5 h-5 animate-spin mr-2" />
-        Loading configuration...
-      </div>
-    );
-  }
-
-  const handleToggle = async (key: string, currentVal: boolean) => {
-    await onUpdateValue(key, !currentVal);
+  const handleSaveAll = async () => {
+    setIsSaving(true);
+    setTargetBackendUrl(localBackendUrl);
+    await onSave();
+    setIsSaving(false);
+    setIsSavedNotice(true);
+    setTimeout(() => setIsSavedNotice(false), 2500);
   };
 
-  const handleTextChange = (key: string, val: string | number) => {
-    onUpdateValue(key, val);
+  const handleTestConnection = async () => {
+    setIsTestingConn(true);
+    setConnStatus("idle");
+    const ok = await testBackendConnection(localBackendUrl);
+    setIsTestingConn(false);
+    setConnStatus(ok ? "connected" : "failed");
   };
 
-  const handleApplicationLanguageChange = async (language: string) => {
-    const languageIndex = APPLICATION_LANGUAGES.findIndex(
-      (option) => option.value === language,
-    );
-    await onUpdateValue("language", language);
-    await onUpdateValue("language_index", Math.max(languageIndex, 0));
+  const formatBytes = (bytes: number): string => {
+    if (!bytes || bytes <= 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
-  const insertFormatterVariable = async (variable: string) => {
-    const input = document.getElementById(
-      `setting-${formatterTarget}`,
-    ) as HTMLInputElement | null;
-    const current = String(config[formatterTarget] ?? "");
-    const start = input?.selectionStart ?? current.length;
-    const end = input?.selectionEnd ?? start;
-    const token = `{${variable}}`;
-    const next = `${current.slice(0, start)}${token}${current.slice(end)}`;
-    await onUpdateValue(formatterTarget, next);
-    window.requestAnimationFrame(() => {
-      const updatedInput = document.getElementById(
-        `setting-${formatterTarget}`,
-      ) as HTMLInputElement | null;
-      updatedInput?.focus();
-      updatedInput?.setSelectionRange(
-        start + token.length,
-        start + token.length,
-      );
-    });
-  };
+  const inputClass =
+    "w-full px-3 py-1.5 text-xs rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-neutral-400";
 
-  const handleCustomPaletteColorChange = (
-    key: keyof CustomThemePalette,
-    value: string,
-  ) => {
-    void onCustomThemeChange({
-      ...customTheme,
-      mode: themeMode,
-      [themeMode]: {
-        ...activeCustomPalette,
-        [key]: value,
-      },
-    });
-  };
+  /* ------------------------------------------------------------------------ */
+  /* Unified Dynamic Input Renderer                                           */
+  /* ------------------------------------------------------------------------ */
 
-  const handleSaveNamedCustomTheme = async () => {
-    const saved = await onSaveCustomTheme(customThemeName);
-    if (!saved) {
-      setCustomThemeMessage("Enter a name before saving this palette.");
-      return;
+  const renderInput = (field) => {
+    const rawVal = config[field.key];
+
+    switch (field.type) {
+      case "switch":
+        return (
+          <div key={field.key} className="py-1">
+            <Switch
+              label={field.label}
+              description={field.description}
+              value={Boolean(rawVal)}
+              onChange={(checked) => onUpdateValue(field.key, checked)}
+              labelPosition="start"
+              labelSpacing="spread"
+            />
+          </div>
+        );
+
+      case "number":
+        return (
+          <div key={field.key}>
+            <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
+              {field.label}
+            </label>
+            <input
+              type="number"
+              min={field.min}
+              max={field.max}
+              step={field.step}
+              value={rawVal ?? field.defaultValue ?? ""}
+              onChange={(e) => {
+                const parsed = field.isFloat
+                  ? parseFloat(e.target.value) || 0
+                  : parseInt(e.target.value, 10) || 0;
+                onUpdateValue(field.key, parsed);
+              }}
+              placeholder={field.placeholder}
+              className={inputClass}
+            />
+            {field.description && (
+              <p className="text-[11px] text-neutral-500 mt-1">{field.description}</p>
+            )}
+          </div>
+        );
+
+      case "select":
+        return (
+          <div key={field.key}>
+            <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
+              {field.label}
+            </label>
+            <select
+              value={rawVal ?? field.defaultValue ?? ""}
+              onChange={(e) => {
+                const val = field.isNumber
+                  ? parseInt(e.target.value, 10) || 0
+                  : e.target.value;
+                onUpdateValue(field.key, val);
+              }}
+              className={inputClass}
+            >
+              {field.options.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            {field.description && (
+              <p className="text-[11px] text-neutral-500 mt-1">{field.description}</p>
+            )}
+          </div>
+        );
+
+      case "string-array":
+        return (
+          <div key={field.key}>
+            <TextInput
+              label={field.label}
+              value={Array.isArray(rawVal) ? rawVal.join(field.delimiter ?? " ") : ""}
+              onChange={(val) =>
+                onUpdateValue(
+                  field.key,
+                  val.split(field.delimiter ?? " ").filter(Boolean)
+                )
+              }
+              description={field.description}
+              placeholder={field.placeholder}
+              size="md"
+            />
+          </div>
+        );
+
+      case "text":
+      case "password":
+      default:
+        return (
+          <div key={field.key}>
+            <TextInput
+              label={field.label}
+              type={field.type === "password" ? "password" : "text"}
+              value={rawVal ?? ""}
+              onChange={(val) => onUpdateValue(field.key, val)}
+              description={field.description}
+              placeholder={field.placeholder}
+              size="md"
+            />
+          </div>
+        );
     }
-    setCustomThemeMessage("Theme saved. Saving the same name updates it.");
-    setCustomThemeName("");
-  };
-
-  const triggerSave = async () => {
-    setSaving(true);
-    const ok = await onSave();
-    setSaving(false);
-    if (ok) {
-      setSavedSuccess(true);
-      setTimeout(() => setSavedSuccess(false), 3000);
-    }
-  };
-
-  const triggerReset = async () => {
-    if (confirm("Are you sure you want to reset all settings to defaults?")) {
-      setResetting(true);
-      await onReset();
-      setResetting(false);
-    }
-  };
-
-  const triggerExport = async () => {
-    const data = await exportBackup();
-    if (!data) return;
-    const themes = {
-      preset: window.localStorage.getItem("ots-theme-preset"),
-      mode: window.localStorage.getItem("ots-theme-mode"),
-      custom: window.localStorage.getItem("ots-custom-theme"),
-      saved: window.localStorage.getItem("ots-custom-themes"),
-    };
-    const path = await saveBackupFile(
-      { ...data, themes },
-      config?.export_folder_path || "",
-    );
-    setBackupMessage(
-      path
-        ? `Backup saved to ${path}`
-        : "Could not save the backup. Check the default export folder and try again.",
-    );
-  };
-
-  const triggerImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    window.alert("Not Implemented Yet.");
-    return;
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setImporting(true);
-    try {
-      const data = JSON.parse(await file.text());
-      if (await importBackup(data)) {
-        const themes = data?.themes;
-        if (themes && typeof themes === "object") {
-          const bundle = themes as Record<string, unknown>;
-          if (typeof bundle.preset === "string")
-            window.localStorage.setItem("ots-theme-preset", String(bundle.preset));
-          if (typeof bundle.mode === "string")
-            window.localStorage.setItem("ots-theme-mode", String(bundle.mode));
-          if (typeof bundle.custom === "string")
-            window.localStorage.setItem("ots-custom-theme", String(bundle.custom));
-          if (typeof bundle.saved === "string")
-            window.localStorage.setItem("ots-custom-themes", String(bundle.saved));
-        }
-        window.location.reload();
-      }
-    } catch {
-      window.alert("That settings file is not valid JSON.");
-    } finally {
-      setImporting(false);
-      event.target.value = "";
-    }
-  };
-
-  // Material Design 3 Styled Switch
-  const renderToggle = (
-    key: string,
-    label: string,
-    desc?: string,
-    disabled: boolean = false,
-  ) => {
-    const isChecked = config[key];
-    return (
-      <div key={key} className="flex items-start justify-between py-3">
-        <div className="pr-4 flex-1">
-          <label
-            className="text-sm font-medium text-gray-900 dark:text-neutral-100 cursor-pointer select-none"
-            onClick={() => !disabled && handleToggle(key, isChecked)}
-          >
-            {label}
-          </label>
-          {desc && (
-            <p className="text-xs text-gray-500 dark:text-neutral-400 mt-1 leading-relaxed">
-              {desc}
-            </p>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={() => handleToggle(key, isChecked)}
-          disabled={disabled}
-          className={`ots-toggle ${isChecked ? "ots-toggle-on" : "ots-toggle-off"} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-        >
-          <span
-            className={`ots-toggle-thumb ${
-              isChecked ? "translate-x-5" : "translate-x-0"
-            }`}
-          />
-        </button>
-      </div>
-    );
-  };
-
-  // Material Design 3 Styled Input
-  const renderInput = (
-    key: string,
-    label: string,
-    type: "text" | "number" | "password" = "text",
-    desc?: string,
-  ) => (
-    <div key={key} className="flex flex-col gap-1.5 py-2 w-full">
-      <label className="text-sm font-medium text-gray-900 dark:text-neutral-100">
-        {label}
-      </label>
-      <input
-        id={`setting-${key}`}
-        type={type}
-        value={config[key] ?? ""}
-        onFocus={() => {
-          if (
-            key === "track_path_formatter" ||
-            key === "playlist_path_formatter"
-          ) {
-            setFormatterTarget(key);
-          }
-        }}
-        onChange={(e) =>
-          handleTextChange(
-            key,
-            type === "number" ? Number(e.target.value) : e.target.value,
-          )
-        }
-        className="ots-input w-full text-sm"
-      />
-      {desc && (
-        <p className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5 leading-relaxed">
-          {desc}
-        </p>
-      )}
-    </div>
-  );
-
-  // Material Design 3 Styled Select
-  const renderSelect = (
-    key: string,
-    label: string,
-    options: { val: string | number; text: string }[],
-    desc?: string,
-  ) => (
-    <div key={key} className="flex flex-col gap-1.5 py-2 w-full">
-      <label className="text-sm font-medium text-gray-900 dark:text-neutral-100">
-        {label}
-      </label>
-      <select
-        value={config[key] ?? options[0].val}
-        onChange={(e) => handleTextChange(key, e.target.value)}
-        className="ots-select w-full cursor-pointer appearance-none text-sm"
-      >
-        {options.map((opt) => (
-          <option key={String(opt.val)} value={opt.val}>
-            {opt.text}
-          </option>
-        ))}
-      </select>
-      {desc && (
-        <p className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5 leading-relaxed">
-          {desc}
-        </p>
-      )}
-    </div>
-  );
-
-  const NavButton = ({
-    id,
-    icon: Icon,
-    label,
-  }: {
-    id: SettingsSection;
-    icon: any;
-    label: string;
-  }) => {
-    const isActive = section === id;
-    return (
-      <button
-        draggable={editingSettingsNav}
-        onDragStart={() => setDraggedSettingsNav(id)}
-        onDragOver={(event) => {
-          if (editingSettingsNav) event.preventDefault();
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          if (!draggedSettingsNav || draggedSettingsNav === id) return;
-          setSettingsNavOrder((current) => {
-            const next = [...current];
-            const from = next.indexOf(draggedSettingsNav);
-            const to = next.indexOf(id);
-            next.splice(from, 1);
-            next.splice(to, 0, draggedSettingsNav);
-            window.localStorage.setItem(
-              "ots-settings-nav-order",
-              JSON.stringify(next),
-            );
-            return next;
-          });
-          setDraggedSettingsNav(null);
-        }}
-        onDragEnd={() => setDraggedSettingsNav(null)}
-        onClick={() => setSection(id)}
-        className={`ots-nav-item flex w-full shrink-0 items-center gap-3 text-left text-sm font-bold transition-colors lg:shrink ${editingSettingsNav ? "cursor-grab" : ""} ${
-          isActive
-            ? "ots-nav-item-active"
-            : "text-[#8f8f8f] hover:bg-[#242424] hover:text-white"
-        }`}
-      >
-        {editingSettingsNav && (
-          <GripVertical
-            className="h-4 w-4 shrink-0 text-[#777]"
-            aria-label="Drag to reorder"
-          />
-        )}
-        <Icon className="w-[18px] h-[18px]" />
-        <span>{label}</span>
-      </button>
-    );
   };
 
   return (
-    <div className="spotify-fade-up ots-page flex flex-col gap-6 font-sans">
-      {/* App Bar / Header */}
-      <div className="ots-hero flex flex-col justify-between gap-4 p-6 md:flex-row md:items-center">
-        <div>
-          <h2 className="flex items-center gap-2 text-xl font-bold text-white">
-            <Sliders className="h-5 w-5 text-[#1ed760]" />
-            System Configuration
-          </h2>
-          <p className="text-sm text-gray-500 dark:text-neutral-400 mt-1">
-            Configurations sync automatically with the OnTheSpot service •
-            Version {config.version}
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={triggerReset}
-            disabled={resetting}
-            className="ots-button ots-button-danger"
-          >
-            <RotateCcw className="w-4 h-4" />
-            <span>{resetting ? "Resetting..." : "Factory Reset"}</span>
-          </button>
-
-          <button
-            onClick={triggerSave}
-            disabled={saving}
-            className="ots-button ots-button-primary px-6 text-sm"
-          >
-            {saving ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : savedSuccess ? (
-              <Check className="w-4 h-4" />
-            ) : (
-              <Save className="w-4 h-4" />
-            )}
-            <span>{savedSuccess ? "Config Saved!" : "Save Config"}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Main Layout Grid */}
-      <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-4">
-        {/* Navigation Sidebar */}
-        <div className="lg:sticky lg:top-8 lg:col-span-1">
-          <div className="ots-panel flex flex-row gap-1 overflow-x-auto p-2 shadow-xl shadow-black/10 lg:flex-col">
-            {settingsNavOrder.map((id) => {
-              const item = SETTINGS_NAV_ITEMS.find(
-                (candidate) => candidate.id === id,
-              )!;
-              return <NavButton key={item.id} {...item} />;
-            })}
-          </div>
-          <button
-            type="button"
-            onClick={() => setEditingSettingsNav((current) => !current)}
-            className={`ots-nav-item mt-2 hidden w-full items-center gap-3 rounded-lg px-4 py-3 text-sm font-semibold transition-colors focus:outline-none lg:flex ${
-              editingSettingsNav
-                ? "bg-[#282828] text-white"
-                : "text-[#b3b3b3] hover:bg-[#1f1f1f] hover:text-white"
-            }`}
-            aria-pressed={editingSettingsNav}
-          >
-            <GripVertical className="h-5 w-5" />
-            <span>
-              {editingSettingsNav
-                ? translate(config.language, "done_editing", "Done editing")
-                : translate(config.language, "edit_sections", "Edit sections")}
-            </span>
-          </button>
-        </div>
-
-        {/* Content Panels */}
-        <div className="ots-panel ots-settings-content flex flex-col p-5 md:p-6 lg:col-span-3">
-          {/* GENERAL SECTION */}
-          {section === "general" && (
-            <div className="animate-[fadeIn_0.2s_ease-out]">
-              <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-neutral-100">
-                  System Variables & Workers
-                </h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  Configure worker threads, download delays, and global
-                  application options.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 mb-6">
-                {renderInput(
-                  "maximum_download_workers",
-                  "Maximum Download Workers",
-                  "number",
-                  "Concurrent song conversion threads",
-                )}
-                {renderInput(
-                  "maximum_queue_workers",
-                  "Maximum Queue Workers",
-                  "number",
-                  "Concurrent playlist item parsing threads",
-                )}
-                {renderInput(
-                  "download_delay",
-                  "Download Delay (seconds)",
-                  "number",
-                  "Wait time between consecutive download requests",
-                )}
-                {renderInput(
-                  "download_chunk_size",
-                  "Download Chunk Size (bytes)",
-                  "number",
-                  "Streaming media chunk size",
-                )}
-              </div>
-
-              <div className="divide-y divide-gray-100 dark:divide-neutral-800/60 border-t border-gray-100 dark:border-neutral-800/60">
-                {renderToggle(
-                  "raw_media_download",
-                  "Raw Media Download",
-                  "Skip media conversion and ID3 metadata writing",
-                )}
-                {renderToggle(
-                  "enable_retry_worker",
-                  "Enable Retry Worker",
-                  "Automatically retry failed downloads",
-                )}
-                {renderInput(
-                  "retry_worker_delay",
-                  "Retry Worker Delay (minutes)",
-                  "number",
-                  "Delay between retry attempts in minutes",
-                )}
-                {renderToggle(
-                  "use_double_digit_path_numbers",
-                  "Double Digit Track Numbers",
-                  "Format track numbers as 01, 02 instead of 1, 2",
-                )}
-                {renderToggle(
-                  "debug_mode",
-                  "Enable Debug Mode",
-                  "Enables verbose logging and internal application debugging features",
-                )}
-                {renderToggle(
-                  "rotate_active_account_number",
-                  "Rotate Active Account Number",
-                  "Cycle through available accounts automatically",
-                )}
-                <div className="py-2">
-                  {renderInput(
-                    "download_delay_variance",
-                    "Download Delay Variance (s)",
-                    "number",
-                    "Random variance added to base download delay",
-                  )}
-                </div>
-                {renderToggle(
-                  "check_for_updates",
-                  "Automatically check for updates",
-                  "Check the configured release feed in the background and notify you when a new version is available",
-                )}
-                <div className="flex flex-col gap-1.5 py-4">
-                  <label
-                    htmlFor="application-language"
-                    className="text-sm font-medium text-gray-900 dark:text-neutral-100"
-                  >
-                    {translate(
-                      config.language,
-                      "application_language",
-                      "Application Language",
-                    )}
-                  </label>
-                  <select
-                    id="application-language"
-                    value={
-                      APPLICATION_LANGUAGES.some(
-                        (option) => option.value === config.language,
-                      )
-                        ? config.language
-                        : "en_US"
-                    }
-                    onChange={(event) =>
-                      void handleApplicationLanguageChange(event.target.value)
-                    }
-                    className="ots-select w-full cursor-pointer appearance-none text-sm"
-                  >
-                    {APPLICATION_LANGUAGES.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5 leading-relaxed">
-                    Uses the bundled application language pack. Your library
-                    metadata and filenames are never sent to a translation
-                    service.
-                  </p>
-                </div>
-                <div className="py-2">
-                  {renderInput(
-                    "ffmpeg_args",
-                    "FFmpeg Arguments (Experimental)",
-                    "text",
-                    "List [] of custom ffmpeg arguments",
-                  )}
-                  {renderInput(
-                    "explicit_label",
-                    "Explicit Label",
-                    "text",
-                    "Label to apply to explicit songs",
-                  )}
-                  {renderInput(
-                    "illegal_character_replacement",
-                    "Illegal Character Replacement",
-                    "text",
-                    "Replace illegal characters in filenames with this string",
-                  )}
-                </div>
-              </div>
-              <UpdatePanel currentVersion={config.version} />
-            </div>
-          )}
-
-          {/* AUDIO SECTION */}
-          {section === "audio" && (
-            <div className="animate-[fadeIn_0.2s_ease-out]">
-              <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-neutral-100">
-                  Audio Formatting & Output
-                </h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  Set root music folder, preferred codecs, bitrates, and folder
-                  formatters.
-                </p>
-              </div>
-
-              <div className="mb-6">
-                {renderInput(
-                  "audio_download_path",
-                  "Audio Download Root Path",
-                  "text",
-                  "Absolute folder path on host filesystem",
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 mb-6 pt-6 border-t border-gray-100 dark:border-neutral-800/60">
-                <div className="sm:col-span-2 divide-y divide-gray-100 dark:divide-neutral-800/60 mb-2 border-b border-gray-100 dark:border-neutral-800/60">
-                  {renderToggle(
-                    "use_source_format",
-                    "Use Source Format",
-                    "Uses the best source quality and format directly",
-                  )}
-                  {renderToggle(
-                    "use_custom_file_bitrate",
-                    "Use Custom Bitrate",
-                    "Enforces files to output using target bitrate selections",
-                  )}
-                </div>
-                {renderSelect(
-                  "track_file_format",
-                  "Track Media Format",
-                  [
-                    { val: "flac", text: "FLAC (Lossless HiRes)" },
-                    { val: "mp3", text: "MP3 (Universal 320k)" },
-                    { val: "m4a", text: "M4A / AAC" },
-                    { val: "opus", text: "Opus (High Efficiency)" },
-                    { val: "wav", text: "WAV (Uncompressed)" },
-                    { val: "ogg", text: "Vorbis Ogg" },
-                  ],
-                  "Download container if standard source formats are disabled.",
-                )}
-                {renderSelect(
-                  "file_bitrate",
-                  "Converted Track File Bitrate",
-                  [
-                    { val: "320k", text: "320 kbps (Maximum Quality)" },
-                    { val: "256k", text: "256 kbps (High)" },
-                    { val: "192k", text: "192 kbps (Medium)" },
-                    { val: "128k", text: "128 kbps (Standard)" },
-                  ],
-                  "Download bitrate conversion output when custom bitrates are enabled.",
-                )}
-                {renderSelect(
-                  "podcast_file_format",
-                  "Podcast File Format",
-                  [
-                    { val: "mp3", text: "MP3 (Medium Quality)" },
-                    { val: "ogg", text: "Vorbis Ogg (High Quality)" },
-                    { val: "wav", text: "WAV (Compatible)" },
-                  ],
-                  "Download format for podcast files.",
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 mb-6 pt-6 border-t border-gray-100 dark:border-neutral-800/60">
-                {renderInput(
-                  "track_path_formatter",
-                  "Track Path Formatter",
-                  "text",
-                  "Variables: {album_artist}, {album}, {year}, {track_number}, {name}",
-                )}
-                {renderInput(
-                  "playlist_path_formatter",
-                  "Playlist Path Formatter",
-                  "text",
-                  "Variables: {playlist_name}, {playlist_owner}, {playlist_number}, {artist}",
-                )}
-                {renderInput(
-                  "podcast_path_formatter",
-                  "Podcast Path Formatter",
-                  "text",
-                  "Variables: {podcast_name}, {podcast_owner}, {episode_number}, {artist}",
-                )}
-                {renderInput(
-                  "m3u_path_formatter",
-                  "M3U Playlist Path Formatter",
-                  "text",
-                  "Variables: {playlist_name}, {playlist_owner}, {playlist_number}",
-                )}
-              </div>
-
-              <div className="mb-6 border-t border-gray-100 pt-6 dark:border-neutral-800/60">
-                <div className="mb-4">
-                  <h4 className="flex items-center gap-2 text-base font-bold text-gray-900 dark:text-neutral-100">
-                    Playlist folder organization
-                  </h4>
-                  <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">
-                    Keep playlist downloads together and choose the folder and
-                    filename pattern used for tracks from playlists.
-                  </p>
-                </div>
-                {renderToggle(
-                  "use_playlist_path",
-                  "Organize playlist downloads into folders",
-                  "Enable this to use the Playlist Path Formatter below instead of the regular track formatter for playlist downloads.",
-                )}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <span className="w-full text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-neutral-400">
-                    Track template presets
-                  </span>
-                  {[
-                    [
-                      "Artist / Album / Track",
-                      "Tracks/{album_artist}/{album}/{track_number} - {name}",
-                    ],
-                    ["Album / Track", "Tracks/{album}/{track_number} - {name}"],
-                  ].map(([label, value]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() =>
-                        void onUpdateValue("track_path_formatter", value)
-                      }
-                      className="ots-button ots-button-secondary text-xs"
-                    >
-                      {label}
-                    </button>
-                  ))}
-                  <span className="mt-2 w-full text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-neutral-400">
-                    Playlist folder presets
-                  </span>
-                  {[
-                    [
-                      "Playlist / Artist",
-                      "Playlists/{playlist_name}/{artist}/{track_number} - {name}",
-                    ],
-                    [
-                      "Playlist / Album",
-                      "Playlists/{playlist_name}/{album}/{track_number} - {name}",
-                    ],
-                  ].map(([label, value]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() =>
-                        void onUpdateValue("playlist_path_formatter", value)
-                      }
-                      className="ots-button ots-button-secondary text-xs"
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <div className="mt-4 border-t border-gray-100 pt-4 dark:border-neutral-800/60">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="w-full text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-neutral-400">
-                      Build a custom formatter
-                    </span>
-                    {(
-                      [
-                        "track_path_formatter",
-                        "playlist_path_formatter",
-                      ] as FormatterKey[]
-                    ).map((key) => (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => {
-                          setFormatterTarget(key);
-                          document.getElementById(`setting-${key}`)?.focus();
-                        }}
-                        className={`ots-button text-xs ${formatterTarget === key ? "ots-button-primary" : "ots-button-secondary"}`}
-                      >
-                        {key === "track_path_formatter"
-                          ? "Track formatter"
-                          : "Playlist formatter"}
-                      </button>
-                    ))}
-                    <span className="text-xs text-gray-500 dark:text-neutral-400">
-                      Click a variable to insert it into the selected formatter.
-                    </span>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {(formatterTarget === "track_path_formatter"
-                      ? [
-                          "album_artist",
-                          "artist",
-                          "album",
-                          "year",
-                          "track_number",
-                          "name",
-                        ]
-                      : [
-                          "playlist_name",
-                          "playlist_owner",
-                          "playlist_number",
-                          "artist",
-                          "album",
-                          "track_number",
-                          "name",
-                        ]
-                    ).map((variable) => (
-                      <button
-                        key={variable}
-                        type="button"
-                        onClick={() => void insertFormatterVariable(variable)}
-                        className="ots-button ots-button-secondary text-xs font-mono"
-                      >
-                        &#123;{variable}&#125;
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="divide-y divide-gray-100 dark:divide-neutral-800/60 pt-6 border-t border-gray-100 dark:border-neutral-800/60">
-                <div className="py-2">
-                  {renderSelect(
-                    "m3u_format",
-                    "M3U Playlist Format",
-                    [
-                      { val: "m3u8", text: "M3U8" },
-                      { val: "m3u", text: "M3U (Standard)" },
-                    ],
-                    "Format wrapper for generated local playlist files",
-                  )}
-                </div>
-                {renderToggle(
-                  "create_m3u_file",
-                  "Create M3U Playlist File",
-                  "Generate playlist index files next to downloaded items",
-                )}
-                {renderToggle(
-                  "save_album_cover",
-                  "Save Cover Art To Folder",
-                  "Save folder.jpg or cover.png inside album directories",
-                )}
-                {renderToggle(
-                  "windows_10_explorer_thumbnails",
-                  "Windows 10 Explorer Thumbnails",
-                  "Enable Windows 10 thumbnail support for downloaded tracks",
-                )}
-                {renderToggle(
-                  "download_lyrics",
-                  "Download Lyrics",
-                  "Fetch synchronized or plain-text lyric files",
-                )}
-                {config.download_lyrics && (
-                  <div>
-                    {renderToggle(
-                      "save_lrc_file",
-                      "Save .LRC Lyrics File",
-                      "Export synced lyric timestamps as standalone .lrc assets",
-                    )}
-                    {renderToggle(
-                      "only_download_synced_lyrics",
-                      "Only Download Synced Lyrics",
-                      "Download only synced lyrics files (if available)",
-                    )}
-                    {renderToggle(
-                      "only_download_plain_lyrics",
-                      "Only Download Plain Text Lyrics",
-                      "Download only plain-text lyric files (if available)",
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* DOWNLOAD PROFILES SECTION */}
-          {section === "profiles" && (
-            <DownloadProfilesPanel
-              profiles={profiles}
-              activeProfile={activeProfile}
-              onSave={onSaveProfile}
-              onDelete={onDeleteProfile}
-              onActivate={onActivateProfile}
+    <div className="space-y-5" id="settings-view">
+      {/* Page Header */}
+      <PageHeader
+        id="settings-page-header"
+        icon={<Sliders className="w-5 h-5" />}
+        title="Settings & Configuration"
+        badge={isSavedNotice ? { label: "Saved Successfully", variant: "success" } : undefined}
+        description="Configure downloader concurrency, metadata embedding, directory paths, video conversion, and API integrations"
+        actions={
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              label="Reset Defaults"
+              icon={<RotateCcw className="w-3.5 h-3.5" />}
+              onClick={onReset}
+              id="btn-settings-reset"
             />
-          )}
+            <Button
+              variant="primary"
+              size="sm"
+              label="Save Configuration"
+              icon={<Save className="w-3.5 h-3.5" />}
+              onClick={handleSaveAll}
+              isLoading={isSaving}
+              id="btn-settings-save"
+            />
+          </>
+        }
+        bottomContent={
+          <div className="overflow-x-auto h-8">
+            <TabList
+              value={activeTab}
+              onChange={(tabId) => setActiveTab(tabId)}
+              size="sm"
+            >
+              <Tab value="general" label="General & Workers" icon={<Cpu className="w-3.5 h-3.5" />} />
+              <Tab value="audio" label="Audio & Output" icon={<Music className="w-3.5 h-3.5" />} />
+              <Tab value="video" label="Video & Shows" icon={<Film className="w-3.5 h-3.5" />} />
+              <Tab value="metadata" label="Metadata & ID3" icon={<Tag className="w-3.5 h-3.5" />} />
+              <Tab value="integrations" label="Services & Auth" icon={<Key className="w-3.5 h-3.5" />} />
+              <Tab value="profiles" label="Download Profiles" icon={<Download className="w-3.5 h-3.5" />} />
+              <Tab value="backend" label="Backend & System" icon={<Server className="w-3.5 h-3.5" />} />
+            </TabList>
+          </div>
+        }
+      />
 
-          {/* VIDEO SECTION */}
-          {section === "video" && (
-            <div className="animate-[fadeIn_0.2s_ease-out]">
-              <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-neutral-100">
-                  Video, Movies & Anime Settings
-                </h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  Configure resolution preferences and container formatting for
-                  video media.
-                </p>
-              </div>
+      {/* ========================================================================= */}
+      {/* 1. GENERAL & WORKERS                                                      */}
+      {/* ========================================================================= */}
+      {activeTab === "general" && (
+        <div className="space-y-4" id="settings-tab-general">
+          <Card padding={4} elevation="low">
+            <div className="flex items-center gap-2 mb-4">
+              <Cpu className="w-4 h-4 text-neutral-500" />
+              <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                Worker Concurrency & Rate Limiting
+              </h3>
+            </div>
 
-              <div className="mb-6">
-                {renderInput(
-                  "video_download_path",
-                  "Video Download Root Path",
-                  "text",
-                )}
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[
+                { key: "maximum_download_workers", label: "Maximum Download Workers", type: "number", min: 1, max: 16, defaultValue: 2, description: "Simultaneous stream download threads." },
+                { key: "maximum_queue_workers", label: "Queue Polling Workers", type: "number", min: 1, max: 16, defaultValue: 4, description: "Tracks parsing and catalog gathering threads." },
+                { key: "download_delay", label: "Download Delay (Seconds)", type: "number", step: "0.1", min: 0, isFloat: true, defaultValue: 1.5, description: "Simulates organic playback requests." },
+                { key: "download_delay_variance", label: "Delay Variance (Seconds)", type: "number", step: "0.1", min: 0, isFloat: true, defaultValue: 0.5, description: "Random jitter window (± seconds)." },
+                { key: "api_request_delay", label: "API Request Delay (Seconds)", type: "number", step: "0.05", min: 0, isFloat: true, defaultValue: 0, description: "Pacing interval between catalog queries." },
+                { key: "api_retry_max_attempts", label: "API Retry Max Attempts", type: "number", min: 1, max: 20, defaultValue: 3 },
+                { key: "api_retry_base_delay", label: "API Retry Base Delay (Seconds)", type: "number", step: "0.5", min: 0, isFloat: true, defaultValue: 1 },
+                { key: "api_retry_max_delay", label: "API Retry Max Delay (Seconds)", type: "number", step: 1, min: 1, defaultValue: 30 },
+                { key: "retry_worker_delay", label: "Retry Worker Delay (Seconds)", type: "number", min: 1, max: 300, defaultValue: 5 },
+              ].map(renderInput)}
+            </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 mb-6">
-                {renderSelect("movie_file_format", "Movie Container Format", [
-                  { val: "mkv", text: "MKV (Matroska Container)" },
-                  { val: "mp4", text: "MP4 (Standard Video)" },
-                ])}
-                {renderSelect(
-                  "preferred_video_resolution",
-                  "Preferred Video Resolution",
-                  [
-                    { val: 1080, text: "1080p (Full HD)" },
-                    { val: 720, text: "720p (HD)" },
-                    { val: 2160, text: "4K (Ultra HD)" },
+            <div className="mt-5 pt-4 border-t border-neutral-200 dark:border-neutral-800 space-y-2">
+              {[
+                { key: "rotate_active_account_number", label: "Automatic Worker Account Rotation", type: "switch", description: "Distribute media load across authenticated accounts of the same service." },
+                { key: "enable_retry_worker", label: "Enable Background Retry Worker", type: "switch", description: "Periodically retry enqueued items that timed out or hit rate limits." },
+              ].map(renderInput)}
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              Application & System Preferences
+            </h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[
+                {
+                  key: "theme",
+                  label: "Theme Appearance",
+                  type: "select",
+                  defaultValue: "system",
+                  options: [
+                    { value: "system", label: "System Default" },
+                    { value: "dark", label: "Dark Mode" },
+                    { value: "light", label: "Light Mode" },
                   ],
-                )}
-                {renderSelect("show_file_format", "Show Container Format", [
-                  { val: "mkv", text: "MKV (Matroska Container)" },
-                  { val: "mp4", text: "MP4 (Standard Video)" },
-                ])}
-              </div>
+                },
+              ].map(renderInput)}
+            </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 mb-6 pt-6 border-t border-gray-100 dark:border-neutral-800/60">
-                {renderInput(
-                  "movie_path_formatter",
-                  "Movie Path Formatter",
-                  "text",
-                )}
-                {renderInput(
-                  "show_path_formatter",
-                  "TV Show Path Formatter",
-                  "text",
-                )}
-                {renderInput(
-                  "preferred_audio_language",
-                  "Preferred Audio Language Code",
-                  "text",
-                  "Target stream language code (e.g., en-US)",
-                )}
-                {renderInput(
-                  "preferred_subtitle_language",
-                  "Preferred Subtitle Language Code",
-                  "text",
-                  "Target subtitle language code (e.g., en-US)",
-                )}
-              </div>
+            <div className="mt-5 pt-4 border-t border-neutral-200 dark:border-neutral-800 space-y-2">
+              {[
+                { key: "check_for_updates", label: "Check for Updates Automatically", type: "switch", description: "Query the release repository on launch and intervals." },
+                { key: "windows_10_explorer_thumbnails", label: "Windows 10 Explorer Thumbnail Support", type: "switch", description: "Format cover streams for standard Explorer folder caching." },
+                { key: "debug_mode", label: "Debug Logging Mode", type: "switch", description: "Output verbose internal states and network request traces." },
+              ].map(renderInput)}
+            </div>
+          </Card>
 
-              <div className="divide-y divide-gray-100 dark:divide-neutral-800/60 pt-6 border-t border-gray-100 dark:border-neutral-800/60">
-                {renderToggle(
-                  "download_subtitles",
-                  "Download Subtitles",
-                  "Extract and embed soft subtitles or save external .srt components",
-                )}
-                {renderToggle(
-                  "download_chapters",
-                  "Download Video Chapters",
-                  "Preserve internal chapter segment markers",
-                )}
-                {renderToggle(
-                  "download_all_available_audio",
-                  "Download All Available Audio Tracks",
-                  "Include alternative language audio dubs",
-                )}
-                {renderToggle(
-                  "download_all_available_subtitles",
-                  "Download All Available Subtitles",
-                  "Include alternative language subtitles dubs",
-                )}
-              </div>
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              UI Controls & Queue Item Action Buttons
+            </h3>
 
-              {/* V2A Section */}
-              <div className="mt-8 pt-8 border-t border-gray-100 dark:border-neutral-800/60">
-                <div className="bg-blue-50 dark:bg-blue-900/10 rounded-2xl p-6 border border-blue-100 dark:border-blue-900/30">
-                  <h4 className="text-base font-medium text-gray-900 dark:text-neutral-100 mb-1">
-                    Video to Audio Extraction (V2A)
-                  </h4>
-                  <p className="text-sm text-gray-500 dark:text-neutral-400 mb-4">
-                    Strip output and save audio streams only when downloading
-                    video sources.
-                  </p>
+            <div className="space-y-2">
+              {[
+                { key: "show_search_thumbnails", label: "Show Search Thumbnails", type: "switch", description: "Display album artwork beside catalog search results." },
+                { key: "show_download_thumbnails", label: "Show Download Queue Thumbnails", type: "switch", description: "Display media artwork next to active items in queue." },
+                { key: "disable_download_popups", label: "Disable Download Popups", type: "switch", description: "Suppress banner notifications when adding items to queue." },
+              ].map(renderInput)}
+            </div>
 
-                  {renderToggle(
-                    "v2a_enable",
-                    "Enable Audio Extraction",
-                    "Discard video components and convert tracks to designated format",
-                  )}
+          </Card>
 
-                  {config.v2a_enable && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 mt-6 pt-6 border-t border-blue-200/50 dark:border-blue-800/30 animate-[fadeIn_0.2s_ease-out]">
-                      {renderSelect(
-                        "v2a_preferred_codec",
-                        "Preferred Audio Codec",
-                        [
-                          { val: "opus", text: "Opus (High Efficiency)" },
-                          { val: "m4a", text: "M4A / AAC" },
-                          { val: "mp3", text: "MP3 (Standard)" },
-                          { val: "flac", text: "FLAC (Lossless)" },
-                          { val: "wav", text: "WAV (Uncompressed)" },
-                        ],
-                        "Output file compression profile",
-                      )}
-                      {renderInput(
-                        "v2a_preferred_bitrate",
-                        "Preferred Audio Bitrate (kbps)",
-                        "number",
-                        "Target bitrate limit (e.g., 256, 320)",
-                      )}
-                    </div>
-                  )}
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              Catalog Search Queries & Filters
+            </h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              {[
+                { key: "max_search_results", label: "Max Search Results per Query", type: "number", min: 1, max: 100, defaultValue: 20 },
+                { key: "search_prefix", label: "Default Search Prefix", type: "text", placeholder: "e.g. spotify: or artist:" },
+              ].map(renderInput)}
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-2">
+                  Universal Search Content Categories
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {[
+                    { key: "enable_search_tracks", label: "Search Tracks", type: "switch" },
+                    { key: "enable_search_albums", label: "Search Albums", type: "switch" },
+                    { key: "enable_search_playlists", label: "Search Playlists", type: "switch" },
+                    { key: "enable_search_artists", label: "Search Artists", type: "switch" },
+                    { key: "enable_search_episodes", label: "Search Episodes", type: "switch" },
+                    { key: "enable_search_podcasts", label: "Search Podcasts", type: "switch" },
+                    { key: "enable_search_audiobooks", label: "Search Audiobooks", type: "switch" },
+                  ].map(renderInput)}
                 </div>
               </div>
             </div>
-          )}
+          </Card>
+        </div>
+      )}
 
-          {/* METADATA SECTION */}
-          {section === "metadata" && (
-            <div className="animate-[fadeIn_0.2s_ease-out]">
-              <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-neutral-100">
-                  ID3 Metadata Tagging
-                </h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  Select exactly which metadata tags to inject into downloaded
-                  music tracks.
-                </p>
+      {/* ========================================================================= */}
+      {/* 2. AUDIO & OUTPUT                                                         */}
+      {/* ========================================================================= */}
+      {activeTab === "audio" && (
+        <div className="space-y-4" id="settings-tab-audio">
+          <Card padding={4} elevation="low">
+            <div className="flex items-center gap-2 mb-4">
+              <Music className="w-4 h-4 text-neutral-500" />
+              <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                Audio Storage Paths & Naming Formatters
+              </h3>
+            </div>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {[
+                  { key: "audio_download_path", label: "Audio Download Path", type: "text", placeholder: "/music/OnTheSpot", description: "Primary directory." },
+                ].map(renderInput)}
               </div>
 
-              <div className="mb-6 max-w-md">
-                {renderSelect(
-                  "album_cover_format",
-                  "Cover Art Compression Format",
-                  [
-                    { val: "png", text: "PNG (Lossless Quality, Larger Size)" },
-                    {
-                      val: "jpeg",
-                      text: "JPEG (Efficient Compression, Smaller Size)",
-                    },
-                  ],
-                )}
+              {[
+                { key: "track_path_formatter", label: "Track File Path Formatter", type: "text", description: "Tags: {artist}, {album}, {track_number}, {disc_number}, {title}, {year}, {genre}" },
+                { key: "playlist_path_formatter", label: "Playlist Path Formatter", type: "text", description: "Layout when 'Use Playlist Path Structure' is enabled." },
+              ].map(renderInput)}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[
+                  { key: "podcast_path_formatter", label: "Podcast Path Formatter", type: "text", description: "Target folder for podcasts" },
+                  { key: "podcast_file_format", label: "Podcast File Format", type: "text", description: "Target container for voice episodes." },
+                ].map(renderInput)}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 divide-y sm:divide-y-0 divide-gray-100 dark:divide-neutral-800/60 mb-8 border-t border-gray-100 dark:border-neutral-800/60 pt-4">
-                {renderToggle("embed_cover", "Embed Cover Art")}
-                {renderToggle("embed_artist", "Embed Artist")}
-                {renderToggle("embed_album", "Embed Album")}
-                {renderToggle("embed_albumartist", "Embed Album Artist")}
-                {renderToggle("embed_name", "Embed Title")}
-                {renderToggle("embed_year", "Embed Release Year")}
-                {renderToggle("embed_length", "Embed Duration")}
-
-                {renderToggle("embed_tracknumber", "Embed Track Number")}
-                {renderToggle("embed_discnumber", "Embed Disc Number")}
-                {renderToggle("embed_genre", "Embed Genre")}
-                {renderToggle("embed_lyrics", "Embed Lyrics")}
-                {renderToggle("embed_label", "Embed Record Label")}
-                {renderToggle("embed_copyright", "Embed Copyright")}
-                {renderToggle("embed_isrc", "Embed ISRC Code")}
-                {renderToggle("embed_upc", "Embed UPC ")}
-                {renderToggle("embed_service_id", "Embed Service ID")}
-                {renderToggle("embed_bpm", "Embed BPM / Tempo")}
-                {renderToggle("embed_key", "Embed Musical Key")}
-                {renderToggle("embed_producers", "Embed Producers")}
-                {renderToggle("embed_writers", "Embed Writers")}
-                {renderToggle("embed_explicit", "Embed Explicit Tag")}
-                {renderToggle("embed_composer", "Embed Composer")}
-                {renderToggle(
-                  "prefer_composer_as_album_artist",
-                  "Use Composer as Album Artist",
-                )}
-                {renderToggle("embed_performers", "Embed Performers")}
-                {renderToggle("embed_description", "Embed Description")}
-                {renderToggle("embed_language", "Embed Language")}
-                {renderToggle("embed_url", "Embed URL")}
-              </div>
-              <div className="mb-6">
-                {renderToggle(
-                  "overwrite_existing_metadata",
-                  "Overwrite Existing Metadata",
-                  "Overwrite existing metadata tags if file exists",
-                )}
-              </div>
-              <div className="pt-6 border-t border-gray-100 dark:border-neutral-800/60 mb-6">
-                <h4 className="text-sm font-medium text-blue-600 dark:text-blue-400 mb-4">
-                  Spotify Specific Fields (Requires Audio Features API)
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 divide-y sm:divide-y-0 divide-gray-100 dark:divide-neutral-800/60">
-                  {renderToggle("embed_timesignature", "Embed Time Signature")}
-                  {renderToggle("embed_acousticness", "Embed Acousticness")}
-                  {renderToggle("embed_danceability", "Embed Danceability")}
-                  {renderToggle("embed_energy", "Embed Energy")}
-                  {renderToggle(
-                    "embed_instrumentalness",
-                    "Embed Instrumentalness",
-                  )}
-                  {renderToggle("embed_liveness", "Embed Liveness")}
-                  {renderToggle("embed_loudness", "Embed Loudness")}
-                  {renderToggle("embed_speechiness", "Embed Speechiness")}
-                  {renderToggle("embed_valence", "Embed Valence")}
-                </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {[
+                  { key: "album_cover_format", label: "Album Cover Format", type: "text", description: "Artwork format (jpg, png)." },
+                  { key: "illegal_character_replacement", label: "Illegal Character Replacement", type: "text", description: "Replaces / \\ ? * : | < >" },
+                  { key: "file_hertz", label: "Audio Sample Rate (Hertz)", type: "number", min: 22050, max: 192000, step: 100, defaultValue: 44100, description: "Output sample rate (e.g. 44100, 48000)." },
+                ].map(renderInput)}
               </div>
 
-              <div className="w-full border-t border-gray-100 pt-6 dark:border-neutral-800/60">
-                {renderInput(
-                  "metadata_separator",
-                  "Metadata Value Separator",
-                  "text",
-                  'Separation character for multi-value tags (e.g. "; ")',
-                )}
+              {renderInput({
+                key: "ffmpeg_args",
+                label: "Custom FFmpeg Arguments",
+                type: "string-array",
+                description: "Space-delimited arguments forwarded directly to the FFmpeg transcoder.",
+              })}
+
+              <div className="pt-4 border-t border-neutral-200 dark:border-neutral-800 space-y-2">
+                {[
+                  { key: "use_playlist_path", label: "Use Playlist Path Structure", type: "switch", description: "Store playlist tracks inside a dedicated playlist directory." },
+                  { key: "use_double_digit_path_numbers", label: "Use Double Digit Numbers", type: "switch", description: "Zero-pad track and disc numbers (01, 02...) in file paths." },
+                  { key: "translate_file_path", label: "Translate File Paths", type: "switch", description: "Convert non-ASCII characters to standard Latin equivalents in file paths." },
+                ].map(renderInput)}
               </div>
             </div>
-          )}
+          </Card>
 
-          {/* SEARCH SECTION */}
-          {section === "search" && (
-            <div className="animate-[fadeIn_0.2s_ease-out]">
-              <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-neutral-100">
-                  API Configuration
-                </h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  Optimize third-party platform API limits and toggle library
-                  source scopes.
-                </p>
-              </div>
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              M3U &amp; M3U8 Playlist Export Options
+            </h3>
 
-              <div className="ots-settings-section mb-8">
-                <h4 className="ots-settings-section-title mb-4 flex items-center gap-2">
-                  <Sliders className="w-4 h-4" /> API Call Reduction Settings
-                </h4>
-                <div className="ots-settings-divider">
-                  {renderToggle(
-                    "cache_api_calls",
-                    "Cache API Calls",
-                    "Reuses safe public catalogue responses to reduce API usage",
-                  )}
-                  {renderToggle(
-                    "fetch_genre_metadata",
-                    "Fetch Genre from Artist Endpoint",
-                    "Requires +1 additional query per processed track",
-                  )}
-                  {renderToggle(
-                    "fetch_extended_album_metadata",
-                    "Fetch Extra Album Metadata",
-                    "Requires +1 additional query per processed track",
-                  )}
-                  {renderToggle(
-                    "fetch_audio_features",
-                    "Fetch Audio Features",
-                    "Requires +1 additional query per processed track",
-                  )}
-                  {renderToggle(
-                    "fetch_track_credits",
-                    "Fetch Record Label & Copyright",
-                    "Requires +1 additional query per processed track",
-                  )}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-4">
-                    {renderInput(
-                      "spotify_search_cache_ttl_seconds",
-                      "Spotify Search Cache (seconds)",
-                      "number",
-                      "Cache public catalogue searches for this long",
-                    )}
-                    {renderInput(
-                      "spotify_metadata_cache_ttl_seconds",
-                      "Spotify Metadata Cache (seconds)",
-                      "number",
-                      "Cache public track, album, artist, and episode data",
-                    )}
-                    {renderInput(
-                      "api_response_cache_ttl_seconds",
-                      "Other Public API Cache (seconds)",
-                      "number",
-                      "Cache unauthenticated public API responses",
-                    )}
-                    {renderInput(
-                      "playlist_automation_cache_ttl_seconds",
-                      "Playlist Sorting Cache (seconds)",
-                      "number",
-                      "Keep playlist reads in memory per signed-in account",
-                    )}
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-4">
-                    {renderInput(
-                      "spotify_webapi_override_client_id",
-                      "Spotify Client ID",
-                      "text",
-                    )}
-                    {renderInput(
-                      "spotify_webapi_override_client_secret",
-                      "Spotify Client Secret",
-                      "password",
-                      config.spotify_webapi_override_client_secret_configured
-                        ? "A secret is configured. Enter a value only to replace it."
-                        : "Required for Spotify catalogue and playlist-sorting API access.",
-                    )}
-                  </div>
-                </div>
-              </div>
+            <div className="space-y-4">
+              {renderInput({
+                key: "create_m3u_file",
+                label: "Create M3U Playlist Files",
+                type: "switch",
+                description: "Automatically generate playlist index files alongside downloaded playlists.",
+              })}
 
-              <div className="mb-8">
-                <h4 className="text-base font-medium text-gray-900 dark:text-neutral-100 mb-4">
-                  Enabled Search Categories
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 divide-y sm:divide-y-0 divide-gray-100 dark:divide-neutral-800/60 border border-gray-200 dark:border-neutral-800/60 rounded-xl p-4">
-                  {renderToggle("enable_search_tracks", "Search Tracks")}
-                  {renderToggle("enable_search_albums", "Search Albums")}
-                  {renderToggle("enable_search_playlists", "Search Playlists")}
-                  {renderToggle("enable_search_artists", "Search Artists")}
-                  {renderToggle("enable_search_podcasts", "Search Podcasts")}
-                  {renderToggle("enable_search_episodes", "Search Episodes")}
-                  {renderToggle(
-                    "enable_search_audiobooks",
-                    "Search Audiobooks",
-                  )}
-                </div>
-              </div>
-
-              <div className="pt-6 border-t border-gray-100 dark:border-neutral-800/60 max-w-md">
-                {renderInput(
-                  "search_prefix",
-                  "Default Search Prefix",
-                  "text",
-                  'Fallback search prefix parameter (e.g., "the")',
-                )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[
+                  { key: "m3u_path_formatter", label: "M3U Path Formatter", type: "text" },
+                  { key: "m3u_format", label: "M3U Format Flavor", type: "text" },
+                  { key: "extinf_separator", label: "EXTINF Separator", type: "text" },
+                  { key: "extinf_label", label: "EXTINF Label Pattern", type: "text" },
+                ].map(renderInput)}
               </div>
             </div>
-          )}
+          </Card>
 
-          {/* DISPLAY SECTION */}
-          {section === "display" && (
-            <div className="animate-[fadeIn_0.2s_ease-out]">
-              <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-neutral-100">
-                  Web UI & Display Controls
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              Audio Bitrate, Lyrics &amp; Artwork
+            </h3>
+
+            <div className="space-y-2">
+              {[
+                { key: "use_source_format", label: "Use source format", type: "switch", description: "Use the same format of the download file for saved files (override profiles!)" },
+                { key: "prefer_best_source_format", label: "Raw Media Download", type: "switch", description: "Always prefer the best source format for download" },
+                { key: "raw_media_download", label: "Raw Media Download", type: "switch", description: "Write directly streamed chunks to disk without decoding. (override profiles!)" },
+                { key: "save_album_cover", label: "Save Separate Album Artwork Image", type: "switch", description: "Save folder.jpg or cover.jpg alongside audio tracks." },
+                { key: "download_lyrics", label: "Download Lyrics", type: "switch", description: "Retrieve track lyrics from catalog providers." },
+                { key: "save_lrc_file", label: "Save .LRC Lyrics Files", type: "switch", description: "Save synchronized lyric files alongside audio tracks." },
+                { key: "only_download_synced_lyrics", label: "Only Download Synced Lyrics", type: "switch", description: "Skip lyrics if time-synced markers are unavailable." },
+                { key: "only_download_plain_lyrics", label: "Only Download Plain Lyrics", type: "switch", description: "Prefer un-synced plain text lines over timed files." },
+              ].map(renderInput)}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 3. VIDEO & SHOWS                                                          */}
+      {/* ========================================================================= */}
+      {activeTab === "video" && (
+        <div className="space-y-4" id="settings-tab-video">
+          <Card padding={4} elevation="low">
+            <div className="flex items-center gap-2 mb-4">
+              <Film className="w-4 h-4 text-neutral-500" />
+              <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                Video Storage Paths &amp; Quality Parameters
+              </h3>
+            </div>
+
+            <div className="space-y-4">
+              {renderInput({
+                key: "video_download_path",
+                label: "Video Download Destination Folder",
+                type: "text",
+                placeholder: "/videos/OnTheSpot",
+                description: "Base destination for movies, TV series, and video episodes.",
+              })}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[
+                  { key: "movie_path_formatter", label: "Movie Path Formatter", type: "text" },
+                  { key: "movie_file_format", label: "Movie File Format", type: "text" },
+                  { key: "show_path_formatter", label: "TV Show Path Formatter", type: "text" },
+                  { key: "show_file_format", label: "TV Show File Format", type: "text" },
+                ].map(renderInput)}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {[
+                  {
+                    key: "preferred_video_resolution",
+                    label: "Preferred Video Resolution",
+                    type: "select",
+                    isNumber: true,
+                    defaultValue: 1080,
+                    options: [
+                      { value: 2160, label: "4K UHD (2160p)" },
+                      { value: 1440, label: "QHD (1440p)" },
+                      { value: 1080, label: "FHD (1080p)" },
+                      { value: 720, label: "HD (720p)" },
+                      { value: 480, label: "SD (480p)" },
+                    ],
+                  },
+                  { key: "preferred_audio_language", label: "Preferred Audio Language", type: "text", placeholder: "en" },
+                  { key: "preferred_subtitle_language", label: "Preferred Subtitle Language", type: "text", placeholder: "en" },
+                ].map(renderInput)}
+              </div>
+
+              <div className="pt-4 border-t border-neutral-200 dark:border-neutral-800 space-y-2">
+                {[
+                  { key: "download_subtitles", label: "Download Subtitles", type: "switch", description: "Extract subtitle streams into video containers or .srt files." },
+                  { key: "download_chapters", label: "Download Video Chapters", type: "switch", description: "Embed chapter markers into output video containers." },
+                  { key: "download_all_available_audio", label: "Download All Available Audio Tracks", type: "switch", description: "Preserve all available localized audio language tracks." },
+                  { key: "download_all_available_subtitles", label: "Download All Available Subtitle Languages", type: "switch", description: "Keep every subtitle stream provided by the source catalog." },
+                ].map(renderInput)}
+              </div>
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              Video-to-Audio (V2A) Extraction
+            </h3>
+
+            <div className="space-y-4">
+              {renderInput({
+                key: "v2a_enable",
+                label: "Enable Automatic Video-to-Audio Extraction",
+                type: "switch",
+                description: "Automatically transcode downloaded video streams into audio files.",
+              })}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[
+                  { key: "v2a_preferred_codec", label: "V2A Target Codec", type: "text", placeholder: "mp3" },
+                  { key: "v2a_preferred_bitrate", label: "V2A Target Bitrate (kbps)", type: "number", min: 64, max: 512, step: 32, defaultValue: 320 },
+                ].map(renderInput)}
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 4. METADATA & ID3                                                         */}
+      {/* ========================================================================= */}
+      {activeTab === "metadata" && (
+        <div className="space-y-4" id="settings-tab-metadata">
+          <Card padding={4} elevation="low">
+            <div className="flex items-center gap-2 mb-4">
+              <Tag className="w-4 h-4 text-neutral-500" />
+              <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                Metadata Tags &amp; Field Delimiters
+              </h3>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              {[
+                { key: "metadata_separator", label: "Metadata Multi-Value Separator", type: "text", description: "Delimiter between multiple artists or genres." },
+                { key: "explicit_label", label: "Explicit Advisory Label", type: "text", description: "Marker applied to explicit tracks." },
+              ].map(renderInput)}
+            </div>
+
+            <div className="space-y-2 pt-2">
+              {[
+                { key: "overwrite_existing_metadata", label: "Overwrite Existing Metadata", type: "switch", description: "Overwrite pre-existing ID3 tags in media files." },
+                { key: "cache_metadata_in_queue", label: "Cache Queue Metadata in Memory", type: "switch", description: "Keep track metadata cached to avoid duplicate requests." },
+                { key: "prefer_composer_as_album_artist", label: "Prefer Composer as Album Artist", type: "switch", description: "Assign classical music composer to Album Artist tag frame." },
+                { key: "shorten_composer_tag", label: "Shorten Composer Tag", type: "switch", description: "Omit dates and prefixes from composer metadata frames." },
+              ].map(renderInput)}
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              Spotify Specific Catalog Scraping (Needs WebAPI Keys)
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {[
+                { key: "fetch_genre_metadata", label: "Fetch Genre Metadata", type: "switch", description: "Enrich missing track genres from MusicBrainz/services." },
+                { key: "fetch_extended_album_metadata", label: "Fetch Extended Album Metadata", type: "switch", description: "Scrape edition labels, UPC, and liner note details." },
+                { key: "fetch_audio_features", label: "Fetch Audio Features", type: "switch", description: "Retrieve musical key signature, BPM, and acoustic metrics." },
+                { key: "fetch_track_credits", label: "Fetch Track Credits", type: "switch", description: "Enrich files with composers, writers, and producers." },
+              ].map(renderInput)}
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              ID3 Container Standard Text Fields
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {[
+                { key: "embed_name", label: "Track Name (TIT2)", type: "switch" },
+                { key: "embed_artist", label: "Artist (TPE1)", type: "switch" },
+                { key: "embed_album", label: "Album (TALB)", type: "switch" },
+                { key: "embed_albumartist", label: "Album Artist (TPE2)", type: "switch" },
+                { key: "embed_year", label: "Release Year & Date", type: "switch" },
+                { key: "embed_genre", label: "Genre (TCON)", type: "switch" },
+                { key: "embed_tracknumber", label: "Track Number (TRCK)", type: "switch" },
+                { key: "embed_discnumber", label: "Disc Number (TPOS)", type: "switch" },
+                { key: "embed_label", label: "Record Label (TPUB)", type: "switch" },
+                { key: "embed_copyright", label: "Copyright (TCOP)", type: "switch" },
+                { key: "embed_description", label: "Track Description (COMM)", type: "switch" },
+                { key: "embed_language", label: "Language (TLAN)", type: "switch" },
+                { key: "embed_isrc", label: "ISRC Code (TSRC)", type: "switch" },
+                { key: "embed_length", label: "Track Length (TLEN)", type: "switch" },
+                { key: "embed_url", label: "Source URL (WOAS)", type: "switch" },
+                { key: "embed_key", label: "Musical Key (TKEY)", type: "switch" },
+                { key: "embed_bpm", label: "Tempo / BPM (TBPM)", type: "switch" },
+                { key: "embed_compilation", label: "Compilation Flag (TCMP)", type: "switch" },
+                { key: "embed_upc", label: "Barcode / UPC Tag", type: "switch" },
+                { key: "embed_service_id", label: "Service Identifier (UFID)", type: "switch" },
+              ].map(renderInput)}
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              Credits &amp; Production Personnel
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {[
+                { key: "embed_composer", label: "Composer (TCOM)", type: "switch" },
+                { key: "embed_writers", label: "Songwriters (TEXT)", type: "switch" },
+                { key: "embed_producers", label: "Producers (TIPL/IPLS)", type: "switch" },
+                { key: "embed_performers", label: "Performers & Musicians", type: "switch" },
+              ].map(renderInput)}
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              Artwork, Lyrics &amp; Branding Embedding
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {[
+                { key: "embed_cover", label: "Embed Album Artwork (APIC)", type: "switch", description: "Embed artwork into the file's metadata block." },
+                { key: "embed_lyrics", label: "Embed Lyrics (USLT / SYLT)", type: "switch", description: "Write lyric frames directly into audio headers." },
+                { key: "embed_explicit", label: "Embed Explicit Content Advisory", type: "switch", description: "Write parental advisory classification tags." },
+                { key: "embed_branding", label: "Embed OnTheSpot Branding Marker", type: "switch", description: "Append 'Downloaded with OnTheSpot' in comments." },
+              ].map(renderInput)}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 5. SERVICES & AUTH                                                        */}
+      {/* ========================================================================= */}
+      {activeTab === "integrations" && (
+        <div className="space-y-4" id="settings-tab-integrations">
+          <Card padding={4} elevation="low">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-neutral-500" />
+                <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                  Spotify Web API &amp; Connect
                 </h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  Customize dashboard thumbnails, action controls, and
-                  notification popups.
+              </div>
+              {config.spotify_webapi_override_client_secret_configured && (
+                <Badge variant="success" label="Custom API Secret Configured" />
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[
+                { key: "spotify_webapi_override_client_id", label: "Spotify Override Client ID", type: "text", placeholder: "Your client ID" },
+                { key: "spotify_webapi_override_client_secret", label: "Spotify Override Client Secret", type: "text", placeholder: "Your Client Secret" },
+              ].map(renderInput)}
+            </div>
+          </Card>
+
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-4">
+              API In-Memory Caching &amp; Expiration TTLs
+            </h3>
+
+            <div className="space-y-4">
+              {renderInput({
+                key: "cache_api_calls",
+                label: "Cache API Calls in Memory",
+                type: "switch",
+                description: "Store responses in local memory to prevent duplicate requests.",
+              })}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {[
+                  { key: "api_response_cache_ttl_seconds", label: "General API Cache TTL (s)", type: "number", min: 0, defaultValue: 3600 },
+                  { key: "spotify_metadata_cache_ttl_seconds", label: "Spotify Metadata Cache TTL (s)", type: "number", min: 0, defaultValue: 86400 },
+                  { key: "spotify_search_cache_ttl_seconds", label: "Spotify Search Cache TTL (s)", type: "number", min: 0, defaultValue: 3600 },
+                  { key: "playlist_automation_cache_ttl_seconds", label: "Playlist Auto Cache TTL (s)", type: "number", min: 0, defaultValue: 7200 },
+                ].map(renderInput)}
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 6. DOWNLOAD PROFILES                                                      */}
+      {/* ========================================================================= */}
+      {activeTab === "profiles" && (
+        <div className="space-y-4" id="settings-tab-profiles">
+          <Card padding={4} elevation="low">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Download className="w-4 h-4 text-neutral-500" />
+                  <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                    Audio Quality Profiles
+                  </h3>
+                </div>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  Select which quality preset is applied by default when enqueuing new items.
                 </p>
               </div>
+            </div>
 
-              <div className="mb-8 border-b border-gray-200 pb-6 dark:border-neutral-800/60">
-                <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <h4 className="text-base font-medium text-gray-900 dark:text-neutral-100">
-                      Theme
-                    </h4>
-                    <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">
-                      Choose a colour palette for the whole app. The Light/Dark
-                      control changes the mode for every palette, and your
-                      selection is saved in this browser.
-                    </p>
-                  </div>
-                  <div
-                    className="ots-segmented"
-                    role="group"
-                    aria-label="Theme mode"
-                  >
-                    <button
-                      type="button"
-                      aria-pressed={themeMode === "dark"}
-                      className={`ots-segment ${themeMode === "dark" ? "ots-segment-active" : ""}`}
-                      onClick={() => void onThemeModeChange("dark")}
-                    >
-                      Dark
-                    </button>
-                    <button
-                      type="button"
-                      aria-pressed={themeMode === "light"}
-                      className={`ots-segment ${themeMode === "light" ? "ots-segment-active" : ""}`}
-                      onClick={() => void onThemeModeChange("light")}
-                    >
-                      Light
-                    </button>
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {THEME_PRESETS.map((theme) => {
-                    const isSelected = themePreset === theme.id;
-                    const swatches =
-                      theme.id === "custom"
-                        ? ([
-                            activeCustomPalette.background,
-                            activeCustomPalette.accent,
-                            activeCustomPalette.text,
-                          ] as [string, string, string])
-                        : theme.swatches;
-                    const mode = themeMode;
-                    return (
-                      <button
-                        key={theme.id}
-                        type="button"
-                        aria-pressed={isSelected}
-                        onClick={() => void onThemeChange(theme.id)}
-                        className={`ots-theme-option ${isSelected ? "ots-theme-option-active" : ""}`}
-                      >
-                        <span className="ots-theme-preview" aria-hidden="true">
-                          {swatches.map((swatch) => (
-                            <span
-                              key={swatch}
-                              style={{ backgroundColor: swatch }}
-                            />
-                          ))}
-                        </span>
-                        <span className="min-w-0 text-left">
-                          <span className="flex items-center gap-2 text-sm font-bold">
-                            {theme.label}
-                            <span className="ots-theme-mode">{mode}</span>
-                          </span>
-                          <span className="mt-1 block text-xs text-gray-500 dark:text-neutral-400">
-                            {theme.description}
-                          </span>
-                        </span>
-                        <span
-                          className={`ots-theme-check ${isSelected ? "ots-theme-check-visible" : ""}`}
-                          aria-hidden="true"
-                        >
-                          ✓
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {themePreset === "custom" && (
-                <div className="mb-8 border-b border-gray-200 pb-6 dark:border-neutral-800/60">
-                  <div className="mb-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Palette className="h-4 w-4 text-[var(--spotify-green)]" />
-                        <h4 className="text-base font-medium text-gray-900 dark:text-neutral-100">
-                          Custom palette
-                        </h4>
-                      </div>
-                      <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">
-                        Pick the colors that should shape the app. Changes apply
-                        immediately and are saved in this browser.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    {(
-                      [
-                        ["background", "Background", "The page background."],
-                        ["surface", "Panels", "Cards and main surfaces."],
-                        [
-                          "elevated",
-                          "Elevated",
-                          "Raised controls and active cards.",
-                        ],
-                        ["accent", "Accent", "Highlights and primary actions."],
-                        ["text", "Text", "Main readable text."],
-                        ["muted", "Muted text", "Secondary labels and hints."],
-                      ] as Array<[keyof CustomThemePalette, string, string]>
-                    ).map(([key, label, description]) => (
-                      <label key={key} className="ots-color-control">
-                        <span className="min-w-0">
-                          <span className="block text-sm font-semibold text-gray-900 dark:text-neutral-100">
-                            {label}
-                          </span>
-                          <span className="mt-1 block text-xs text-gray-500 dark:text-neutral-400">
-                            {description}
-                          </span>
-                        </span>
-                        <span className="flex items-center gap-2">
-                          <input
-                            aria-label={label}
-                            type="color"
-                            value={activeCustomPalette[key]}
-                            onChange={(event) =>
-                              handleCustomPaletteColorChange(
-                                key,
-                                event.target.value,
-                              )
-                            }
-                          />
-                          <code>{activeCustomPalette[key].toUpperCase()}</code>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-
-                  <div className="mt-5 border-t border-gray-200 pt-5 dark:border-neutral-800/60">
-                    <div className="mb-3">
-                      <h5 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
-                        Saved custom themes
-                      </h5>
-                      <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">
-                        Save this palette with a name so you can switch back to
-                        it later. Saving an existing name updates that theme.
-                      </p>
-                    </div>
-
-                    <div className="flex flex-col gap-2 sm:flex-row">
-                      <input
-                        type="text"
-                        value={customThemeName}
-                        onChange={(event) => {
-                          setCustomThemeName(event.target.value);
-                          if (customThemeMessage) setCustomThemeMessage("");
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter")
-                            void handleSaveNamedCustomTheme();
-                        }}
-                        placeholder="e.g. Warm studio"
-                        aria-label="Saved theme name"
-                        className="ots-input min-w-0 flex-1 text-sm"
-                      />
-                      <button
-                        type="button"
-                        className="ots-button ots-button-primary sm:min-w-[8rem]"
-                        onClick={() => void handleSaveNamedCustomTheme()}
-                        disabled={!customThemeName.trim()}
-                      >
-                        <Save className="h-3.5 w-3.5" />
-                        Save theme
-                      </button>
-                    </div>
-
-                    {customThemeMessage && (
-                      <p
-                        className="mt-2 text-xs text-[var(--spotify-green)]"
-                        role="status"
-                      >
-                        {customThemeMessage}
-                      </p>
-                    )}
-
-                    <div className="mt-4 space-y-2">
-                      {savedCustomThemes.length === 0 ? (
-                        <p className="ots-card p-3 text-xs text-gray-500 dark:text-neutral-400">
-                          No saved custom themes yet.
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {(profiles || config.download_profiles || []).map((prof) => {
+                const isCurrentActive =
+                  prof.id === (config.active_download_profile || activeProfile);
+                return (
+                  <Card key={prof.id} padding={4} elevation="low" id={`profile-card-${prof.id}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                            {prof.name}
+                          </h4>
+                          {isCurrentActive && <Badge variant="success" label="Active Default" />}
+                        </div>
+                        <p className="text-xs font-mono text-neutral-500 mt-1">
+                          Format: {prof.format} • Bitrate: {prof.bitrate}
                         </p>
-                      ) : (
-                        savedCustomThemes.map((savedTheme) => {
-                          const savedPalette = savedTheme.theme[themeMode];
-                          return (
-                            <div
-                              key={savedTheme.id}
-                              className="ots-card flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between"
-                            >
-                              <div className="flex min-w-0 items-center gap-3">
-                                <span
-                                  className="ots-theme-preview"
-                                  aria-hidden="true"
-                                >
-                                  {[
-                                    savedPalette.background,
-                                    savedPalette.accent,
-                                    savedPalette.text,
-                                  ].map((swatch) => (
-                                    <span
-                                      key={swatch}
-                                      style={{ backgroundColor: swatch }}
-                                    />
-                                  ))}
-                                </span>
-                                <div className="min-w-0">
-                                  <p className="truncate text-sm font-semibold text-gray-900 dark:text-neutral-100">
-                                    {savedTheme.name}
-                                  </p>
-                                  <p className="mt-0.5 text-xs text-gray-500 dark:text-neutral-400">
-                                    Updated{" "}
-                                    {new Date(
-                                      savedTheme.updatedAt,
-                                    ).toLocaleDateString()}
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="flex shrink-0 items-center gap-2">
-                                <button
-                                  type="button"
-                                  className="ots-button ots-button-secondary ots-button-sm"
-                                  onClick={() =>
-                                    void onLoadCustomTheme(savedTheme)
-                                  }
-                                >
-                                  Load
-                                </button>
-                                <button
-                                  type="button"
-                                  className="ots-button ots-button-danger ots-button-sm"
-                                  aria-label={`Delete ${savedTheme.name}`}
-                                  onClick={() =>
-                                    void onDeleteCustomTheme(savedTheme.id)
-                                  }
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                  Delete
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })
+                      </div>
+
+                      {!isCurrentActive && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          label="Set Default"
+                          onClick={() => {
+                            onUpdateValue("active_download_profile", prof.id);
+                            onActivateProfile(prof.id);
+                          }}
+                        />
                       )}
                     </div>
-                  </div>
+                  </Card>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+      )}
 
-                  <button
+      {/* ========================================================================= */}
+      {/* 7. BACKEND & SYSTEM STATS                                                 */}
+      {/* ========================================================================= */}
+      {activeTab === "backend" && (
+        <div className="space-y-4" id="settings-tab-backend">
+          <Card padding={4} elevation="low">
+            <div className="flex items-center gap-2 mb-4">
+              <Server className="w-4 h-4 text-neutral-500" />
+              <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                FastAPI Backend Endpoint
+              </h3>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
+                  OnTheSpot FastAPI Server URL
+                </label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="flex-1">
+                    <TextInput
+                      label="Backend URL"
+                      isLabelHidden={true}
+                      value={localBackendUrl}
+                      onChange={(val) => setLocalBackendUrl(val)}
+                      placeholder="http://localhost:8000"
+                      size="md"
+                    />
+                  </div>
+                  <Button
                     type="button"
-                    className="ots-button ots-button-secondary mt-4"
-                    onClick={() =>
-                      void onCustomThemeChange({
-                        mode: themeMode,
-                        dark: { ...DEFAULT_CUSTOM_THEME.dark },
-                        light: { ...DEFAULT_CUSTOM_THEME.light },
-                      })
-                    }
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    Reset custom palette
-                  </button>
+                    variant="secondary"
+                    size="md"
+                    label="Test Connection"
+                    icon={<RefreshCw className="w-3.5 h-3.5" />}
+                    onClick={handleTestConnection}
+                    isLoading={isTestingConn}
+                  />
+                </div>
+                <p className="text-[11px] text-neutral-500 mt-1">
+                  Point this client UI to your local or remote OnTheSpot daemon instance.
+                </p>
+              </div>
+
+              {connStatus !== "idle" && (
+                <div
+                  className={`p-3 rounded-lg border text-xs flex items-center gap-2.5 ${
+                    connStatus === "connected"
+                      ? "border-green-300 bg-green-50 dark:bg-green-950/20 text-green-800 dark:text-green-300"
+                      : "border-red-300 bg-red-50 dark:bg-red-950/20 text-red-800 dark:text-red-300"
+                  }`}
+                >
+                  <StatusDot
+                    variant={connStatus === "connected" ? "success" : "error"}
+                    label={connStatus === "connected" ? "Connected" : "Disconnected"}
+                  />
+                  <span>
+                    {connStatus === "connected"
+                      ? `Successfully connected to FastAPI daemon at ${localBackendUrl}`
+                      : `Could not reach ${localBackendUrl}.`}
+                  </span>
                 </div>
               )}
+            </div>
+          </Card>
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 mb-8">
-                {renderInput("thumbnail_size", "Thumbnail Size (px)", "number")}
-                {renderInput(
-                  "max_search_results",
-                  "Max Search Results per Category",
-                  "number",
-                )}
+          <Card padding={4} elevation="low">
+            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-3">
+              Runtime Diagnostics &amp; Statistics
+            </h3>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/40 border border-neutral-200/60 dark:border-neutral-800">
+                <span className="block text-[11px] font-medium text-neutral-500">Daemon Version</span>
+                <span className="text-sm font-bold text-neutral-900 dark:text-neutral-100">
+                  {config.version || "Unknown"}
+                </span>
               </div>
 
-              <div className="divide-y divide-gray-100 dark:divide-neutral-800/60 pt-4 border-t border-gray-100 dark:border-neutral-800/60">
-                {renderToggle(
-                  "show_search_thumbnails",
-                  "Show Thumbnails in Search View",
-                )}
-                {renderToggle(
-                  "show_download_thumbnails",
-                  "Show Thumbnails in Download Queue",
-                )}
-                {renderToggle(
-                  "download_open_btn",
-                  'Show "Open File" Button in Queue',
-                )}
-                {renderToggle(
-                  "download_locate_btn",
-                  'Show "Locate Folder" Button in Queue',
-                )}
-                {renderToggle(
-                  "download_copy_btn",
-                  'Show "Copy Path" Button in Queue',
-                )}
-                {renderToggle(
-                  "download_delete_btn",
-                  'Show "Cancel / Delete" Button in Queue',
-                )}
-                {renderToggle(
-                  "disable_download_popups",
-                  "Disable Download Popups / Toasts",
-                )}
+              <div className="p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/40 border border-neutral-200/60 dark:border-neutral-800">
+                <span className="block text-[11px] font-medium text-neutral-500">Total Items Downloaded</span>
+                <span className="text-sm font-bold text-neutral-900 dark:text-neutral-100">
+                  {(config.total_downloaded_items ?? 0).toLocaleString()}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/40 border border-neutral-200/60 dark:border-neutral-800">
+                <span className="block text-[11px] font-medium text-neutral-500">Total Data Downloaded</span>
+                <span className="text-sm font-bold text-neutral-900 dark:text-neutral-100">
+                  {formatBytes(config.total_downloaded_data ?? 0)}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-lg bg-neutral-50 dark:bg-neutral-900/40 border border-neutral-200/60 dark:border-neutral-800">
+                <span className="block text-[11px] font-medium text-neutral-500">Authenticated Accounts</span>
+                <span className="text-sm font-bold text-neutral-900 dark:text-neutral-100">
+                  {config.accounts?.length ?? 0}
+                </span>
               </div>
             </div>
-          )}
-
-          {section === "backup" && (
-            <div className="animate-[fadeIn_0.2s_ease-out]">
-              <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-neutral-100">
-                  Backup & Restore
-                </h3>
-                <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">
-                  Back up settings, profiles, themes, queue history, and
-                  local-library metadata in one portable JSON file.
-                </p>
-              </div>
-              <div className="mb-5 border border-[var(--ots-border)] bg-[var(--spotify-surface-elevated)] p-4">
-                {renderInput(
-                  "export_folder_path",
-                  "Default export folder",
-                  "text",
-                  "CSV exports, automation-config exports, and general backups use this folder. Leave blank to use Documents/OnTheSpot Exports.",
-                )}
-                {renderInput(
-                  "playlist_backup_folder_path",
-                  "Playlist backup folder",
-                  "text",
-                  "Optional separate folder for Playlist sorting backups and restores. Leave blank to use a Playlist backups subfolder inside the default export folder.",
-                )}
-                <p className="mt-2 text-xs text-[#777]">
-                  Click Save Config after changing this default. Restore can
-                  still import a backup file from any folder.
-                </p>
-                {backupMessage && (
-                  <p className="mt-3 text-sm text-[var(--spotify-green)]">
-                    {backupMessage}
-                  </p>
-                )}
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="ots-card p-5">
-                  <Archive className="h-5 w-5 text-[var(--spotify-green)]" />
-                  <h4 className="mt-3 font-bold text-gray-900 dark:text-neutral-100">
-                    Create a backup
-                  </h4>
-                  <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">
-                    Includes your saved themes, download profiles, statistics
-                    history, and library index.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => void triggerExport()}
-                    className="ots-button ots-button-primary mt-4"
-                  >
-                    <Download className="h-4 w-4" /> Export backup
-                  </button>
-                </div>
-                <div className="ots-card p-5">
-                  <Upload className="h-5 w-5 text-[var(--spotify-green)]" />
-                  <h4 className="mt-3 font-bold text-gray-900 dark:text-neutral-100">
-                    Restore a backup
-                  </h4>
-                  <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">
-                    Restore settings and history without overwriting account
-                    credentials.
-                  </p>
-                  <label className="ots-button ots-button-secondary mt-4 cursor-pointer">
-                    <Upload className="h-4 w-4" />{" "}
-                    {importing ? "Restoring…" : "Choose backup"}
-                    <input
-                      type="file"
-                      accept="application/json,.json"
-                      className="hidden"
-                      onChange={triggerImport}
-                    />
-                  </label>
-                </div>
-              </div>
-            </div>
-          )}
+          </Card>
         </div>
-      </div>
+      )}
     </div>
   );
 };

@@ -24,9 +24,7 @@ def tidal_add_account_pt1():
     data = {}
     data["client_id"] = CLIENT_ID
     data["scope"] = "r_usr+w_usr+w_sub"
-    response = requests.post(
-        f"{AUTH_URL}/device_authorization", data=data, timeout=HTTP_TIMEOUT
-    )
+    response = requests.post(f"{AUTH_URL}/device_authorization", data=data, timeout=HTTP_TIMEOUT)
 
     if response.status_code != 200:
         logger.info(f"Device authorization pending: {response.json()}")
@@ -42,19 +40,21 @@ def tidal_add_account_pt2(device_code):
     # and display url before starting worker in a thread
     # device_code, verification_url = tidal_add_account_pt1
     logger.info(f"Visit the following url to login: {device_code}")
+    counter = 0
     while True:
         data = {}
         data["client_id"] = CLIENT_ID
         data["device_code"] = device_code
         data["grant_type"] = "urn:ietf:params:oauth:grant-type:device_code"
         data["scope"] = "r_usr+w_usr+w_sub"
-        response = requests.post(
-            f"{AUTH_URL}/token", data=data, auth=AUTH, timeout=HTTP_TIMEOUT
-        )
+        response = requests.post(f"{AUTH_URL}/token", data=data, auth=AUTH, timeout=HTTP_TIMEOUT)
 
         if response.status_code != 200:
             logger.info(f"Token request pending: {response.json()}")
             time.sleep(3)
+            counter += 1
+            if counter > 30:
+                return False
             continue
 
         auth_status = response.json()
@@ -83,7 +83,7 @@ def tidal_login_user(account):
     logger.info("Logging into Tidal account...")
     try:
         # Ping to verify connectivity
-        
+
         if time.time() >= account["login"]["token_expiry"]:
             data = {
                 "client_id": CLIENT_ID,
@@ -92,14 +92,10 @@ def tidal_login_user(account):
                 "scope": "r_usr+w_usr+w_sub",
             }
 
-            response = requests.post(
-                f"{AUTH_URL}/token", data=data, auth=AUTH, timeout=HTTP_TIMEOUT
-            )
+            response = requests.post(f"{AUTH_URL}/token", data=data, auth=AUTH, timeout=HTTP_TIMEOUT)
 
             if response.status_code != 200:
-                logger.info(
-                    f"Error user's ip address is likely blocked, status code: {response.status_code}"
-                )
+                logger.info(f"Error user's ip address is likely blocked, status code: {response.status_code}")
                 raise Exception
 
             auth_data = response.json()
@@ -162,9 +158,7 @@ def tidal_get_search_results(token, search_term, content_types):
     search_results = []
 
     if "track" in content_types:
-        track_search = make_call(
-            f"{BASE_URL}/search/tracks", params=params, headers=headers, skip_cache=True
-        )
+        track_search = make_call(f"{BASE_URL}/search/tracks", params=params, headers=headers, skip_cache=True)
         for track in track_search["items"]:
             search_results.append(
                 {
@@ -179,9 +173,7 @@ def tidal_get_search_results(token, search_term, content_types):
             )
 
     if "album" in content_types:
-        album_search = make_call(
-            f"{BASE_URL}/search/albums", params=params, headers=headers, skip_cache=True
-        )
+        album_search = make_call(f"{BASE_URL}/search/albums", params=params, headers=headers, skip_cache=True)
         for album in album_search["items"]:
             search_results.append(
                 {
@@ -239,16 +231,14 @@ def tidal_get_search_results(token, search_term, content_types):
     return search_results
 
 
-def tidal_get_track_metadata(token, item_id):
+def tidal_get_track_metadata(token, item_id, item):
     headers = {}
     headers["Authorization"] = f"Bearer {token['access_token']}"
 
     params = {}
     params["countryCode"] = token["country_code"]
 
-    track_data = make_call(
-        f"{BASE_URL}/tracks/{item_id}", headers=headers, params=params
-    )
+    track_data = make_call(f"{BASE_URL}/tracks/{item_id}", headers=headers, params=params)
     if not track_data:
         return False
 
@@ -266,12 +256,7 @@ def tidal_get_track_metadata(token, item_id):
 
     # Track Number
     track_number = None
-    for i, track in enumerate(
-        album_data.get("data", {})
-        .get("relationships", {})
-        .get("items", {})
-        .get("data", [])
-    ):
+    for i, track in enumerate(album_data.get("data", {}).get("relationships", {}).get("items", {}).get("data", [])):
         if track.get("id") == str(item_id):
             track_number = i + 1
             break
@@ -294,56 +279,31 @@ def tidal_get_track_metadata(token, item_id):
     info["album_artists"] = track_data.get("artist").get("name")
     info["artists"] = conv_list_format(artists)
     info["album_name"] = track_data.get("album").get("title")
-    info["total_tracks"] = (
-        album_data.get("data", {}).get("attributes", {}).get("numberOfItems")
-    )
-    info["total_discs"] = (
-        album_data.get("data", {}).get("attributes", {}).get("numberOfVolumes")
-    )
+    info["total_tracks"] = album_data.get("data", {}).get("attributes", {}).get("numberOfItems")
+    info["total_discs"] = album_data.get("data", {}).get("attributes", {}).get("numberOfVolumes")
     info["upc"] = album_data.get("data", {}).get("attributes", {}).get("barcodeId")
     try:
-        info["release_year"] = (
-            album_data.get("data", {})
-            .get("attributes", {})
-            .get("releaseDate")
-            .split("-")[0]
-        )
+        info["release_year"] = album_data.get("data", {}).get("attributes", {}).get("releaseDate").split("-")[0]
     except AttributeError:
         pass
     try:
-        info["image_url"] = (
-            album_data.get("included", [])[0]
-            .get("attributes", {})
-            .get("files", [])[0]
-            .get("href", "")
-        )
+        info["image_url"] = album_data.get("included", [])[0].get("attributes", {}).get("files", [])[0].get("href", "")
     except IndexError:
         # shim for https://github.com/justin025/onthespot/issues/176#issuecomment-3178727926, probably a regional api/account difference
         try:
             album_id = track_data.get("album", {}).get("id", "")
-            logger.info(
-                f"Included cover art failed, fetching cover url for album: {album_id}"
-            )
+            logger.info(f"Included cover art failed, fetching cover url for album: {album_id}")
             cover_art_data = make_call(
                 f"{BASEV2_URL}/albums/{album_id}/relationships/coverArt",
                 headers=headers,
                 params=params,
             )
             cover_id = cover_art_data.get("data", {})[0].get("id")
-            cover_art_link = make_call(
-                f"{BASEV2_URL}/artworks/{cover_id}", headers=headers, params=params
-            )
-            info["image_url"] = (
-                cover_art_link.get("data", {})
-                .get("attributes", {})
-                .get("files", {})[0]
-                .get("href")
-            )
+            cover_art_link = make_call(f"{BASEV2_URL}/artworks/{cover_id}", headers=headers, params=params)
+            info["image_url"] = cover_art_link.get("data", {}).get("attributes", {}).get("files", {})[0].get("href")
         except Exception:
             logger.info("Failed to fetch cover art for album: {album_id}")
-    info["album_type"] = (
-        album_data.get("data", {}).get("attributes", {}).get("type").lower()
-    )
+    info["album_type"] = album_data.get("data", {}).get("attributes", {}).get("type").lower()
     info["is_playable"] = track_data.get("streamReady")
 
     return info
@@ -375,9 +335,7 @@ def tidal_get_lyrics(token, item_id, item_type, metadata, filepath):
 
             for key in metadata.keys():
                 value = metadata[key]
-                if key in ["title", "track_title", "tracktitle"] and config.get(
-                    "embed_name"
-                ):
+                if key in ["title", "track_title", "tracktitle"] and config.get("embed_name"):
                     lyrics.append(f"[ti:{value}]")
                 elif key == "artists" and config.get("embed_artist"):
                     lyrics.append(f"[ar:{value}]")
@@ -394,9 +352,7 @@ def tidal_get_lyrics(token, item_id, item_type, metadata, filepath):
                     digit = "0"
                 else:
                     digit = ""
-                lyrics.append(
-                    f"[length:{digit}{round((l_ms / 1000) / 60)}:{round((l_ms / 1000) % 60)}]\n"
-                )
+                lyrics.append(f"[length:{digit}{round((l_ms / 1000) / 60)}:{round((l_ms / 1000) % 60)}]\n")
 
         default_length = len(lyrics)
 
@@ -453,17 +409,11 @@ def tidal_get_mpd_data(token, item_id):
             logger.info(f"MPD PREVIEW: {manifest[:800]}")
             if "<MPD" in manifest or "BaseURL" in manifest or "http" in manifest:
                 return manifest
-            logger.warning(
-                f"Tidal: Manifest for {item_id} at {quality} looks invalid, trying next quality"
-            )
+            logger.warning(f"Tidal: Manifest for {item_id} at {quality} looks invalid, trying next quality")
         else:
-            logger.warning(
-                f"Tidal: No manifest at quality {quality} for track {item_id}, trying next"
-            )
+            logger.warning(f"Tidal: No manifest at quality {quality} for track {item_id}, trying next")
 
-    raise RuntimeError(
-        f"Tidal: Could not get valid manifest for track {item_id} at any quality"
-    )
+    raise RuntimeError(f"Tidal: Could not get valid manifest for track {item_id} at any quality")
 
 
 def tidal_get_artist_album_ids(token, artist_id):
@@ -497,9 +447,7 @@ def tidal_get_album_track_ids(token, album_id):
     params["countryCode"] = token["country_code"]
     params["limit"] = "10000"
 
-    album_track_data = make_call(
-        f"{BASE_URL}/albums/{album_id}/tracks", params=params, headers=headers
-    )
+    album_track_data = make_call(f"{BASE_URL}/albums/{album_id}/tracks", params=params, headers=headers)
 
     item_ids = []
     for track in album_track_data["items"]:
@@ -548,9 +496,7 @@ def tidal_get_mix_data(token, mix_id):
     params["locale"] = "en_US"
     params["deviceType"] = "BROWSER"
 
-    mix_data = make_call(
-        "https://api.tidal.com/v1/pages/mix", params=params, headers=headers
-    )  # , skip_cache=True)
+    mix_data = make_call("https://api.tidal.com/v1/pages/mix", params=params, headers=headers)  # , skip_cache=True)
     playlist_name = mix_data["title"]
     playlist_by = "Tidal"
 

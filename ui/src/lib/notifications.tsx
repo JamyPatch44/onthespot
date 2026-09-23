@@ -1,15 +1,37 @@
-// src/hooks/useNotifications.ts
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { NotificationBannerItem } from "../types";
 import { getTargetBackendUrl } from "./api";
 
-export function useNotifications(userId: string) {
-  const [notifications, setNotifications] = useState<NotificationBannerItem[]>(
-    [],
-  );
+const HISTORY_STORAGE_KEY = "ots-notification-history";
+
+// Global dispatch helper to trigger notifications from anywhere in the app
+export function notify(item: {
+  title: string;
+  message: string;
+  status?: "Completed" | "Failed" | "Cancelled" | "Downloading" | "success" | "warning" | "error" | "info" | string;
+  thumbnail?: string;
+  url?: string;
+  id?: string;
+}) {
+  if (typeof window === "undefined") return;
+  const notif: NotificationBannerItem = {
+    id: item.id || `notif-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    title: item.title,
+    message: item.message,
+    status: item.status || "info",
+    thumbnail: item.thumbnail,
+    url: item.url,
+    timestamp: new Date(),
+  };
+  window.dispatchEvent(new CustomEvent("ots:notification", { detail: notif }));
+}
+
+export function useNotifications(userId?: string) {
+  const [notifications, setNotifications] = useState<NotificationBannerItem[]>([]);
   const [history, setHistory] = useState<NotificationBannerItem[]>(() => {
+    if (typeof window === "undefined") return [];
     try {
-      const stored = localStorage.getItem("ots-notification-history");
+      const stored = localStorage.getItem(HISTORY_STORAGE_KEY);
       return stored ? JSON.parse(stored) : [];
     } catch {
       return [];
@@ -17,95 +39,125 @@ export function useNotifications(userId: string) {
   });
   const [lastStatusChange, setLastStatusChange] = useState(0);
 
-  useEffect(() => {
-    if (!userId) return;
+  // Helper to add a notification to both active banner list and history
+  const addNotification = useCallback((item: Partial<NotificationBannerItem> & { title: string; message: string }) => {
+    const newNotif: NotificationBannerItem = {
+      id: item.id || `notif-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      title: item.title,
+      message: item.message,
+      status: item.status || "info",
+      thumbnail: item.thumbnail,
+      url: item.url,
+      timestamp: item.timestamp || new Date(),
+    };
 
-    // Connect to the FastAPI SSE endpoint
-    const eventSource = new EventSource(
-      `${getTargetBackendUrl()}/api/sse/${userId}`,
-    );
+    // Add to active banners (limited to recent)
+    setNotifications((prev) => {
+      // If already present with same id, replace it
+      if (prev.some((n) => n.id === newNotif.id)) {
+        return prev.map((n) => (n.id === newNotif.id ? newNotif : n));
+      }
+      return [newNotif, ...prev].slice(0, 5);
+    });
 
-    // Listen for events pushed from the server
-    eventSource.onmessage = (event) => {
+    // Record in history (limited to 100)
+    setHistory((prev) => {
+      const next = [newNotif, ...prev.filter((n) => n.id !== newNotif.id)].slice(0, 100);
       try {
-        const data = JSON.parse(event.data);
-        const eventType = data.type;
-        const eventData = data.event || null;
-        if (eventType === "Notification") {
-          const newNotif: NotificationBannerItem = {
-            id: eventData.id || crypto.randomUUID(),
-            title: eventData.title || "",
-            message: eventData.message || "",
-            url: eventData.url || "",
-            status: "",
-          };
-          setNotifications((prevItems) => [newNotif, ...prevItems]);
-          setHistory((previous) => {
-            const next = [newNotif, ...previous].slice(0, 100);
-            try {
-              localStorage.setItem(
-                "ots-notification-history",
-                JSON.stringify(next),
-              );
-            } catch {
-              /* storage is optional */
-            }
-            return next;
-          });
-        } else if (eventType === "STATUS_CHANGE") {
-          const newNotif: NotificationBannerItem = {
-            id: eventData?.local_id || crypto.randomUUID(), // Use item.local_id if available
-            title: eventData?.name || "", // Safe access with optional chaining
-            message: eventData?.item_status, // Backend sends this directly
-            status: (eventData?.item_status as any) || "", // Safe cast
-            thumbnail: eventData?.thumbnail || "", // Safe access
-            timestamp: new Date(),
-          };
-          setNotifications((prevItems) => {
-            if (prevItems.length === 0) return [newNotif];
-            if (prevItems.some((item) => item.id === newNotif.id)) {
-              return prevItems.map((item) =>
-                item.id === newNotif.id ? newNotif : item,
-              );
-            } else {
-              return [newNotif, ...prevItems];
-            }
-          });
-        }
-      } catch (error) {
-        console.error("Failed to parse notification:", error);
+        localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // storage quota exceeded or unavailable
+      }
+      return next;
+    });
+
+    setLastStatusChange(Date.now());
+  }, []);
+
+  // Listen to in-app custom event
+  useEffect(() => {
+    const handleCustomEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<NotificationBannerItem>;
+      if (customEvent.detail) {
+        addNotification(customEvent.detail);
       }
     };
 
-    eventSource.onerror = () => {
-      // The backend deliberately recycles idle SSE streams so graceful
-      // shutdown cannot be held open indefinitely. EventSource reconnects on
-      // its own; logging that expected cycle as an error floods the console.
-    };
-
-    // CLEANUP: Close connection when the component unmounts
+    window.addEventListener("ots:notification", handleCustomEvent);
     return () => {
-      eventSource.close();
+      window.removeEventListener("ots:notification", handleCustomEvent);
     };
-  }, [userId]);
+  }, [addNotification]);
 
-  // Helper function to remove a notification once the user reads it
-  const dismissNotification = (id: string) => {
+  // Connect to FastAPI SSE endpoint if configured
+  useEffect(() => {
+    const targetUrl = getTargetBackendUrl();
+    if (!targetUrl || !userId) return;
+
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource(`${targetUrl}/api/sse/${userId}`);
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const eventType = data.type;
+          const eventData = data.event || null;
+
+          if (eventType === "Notification" && eventData) {
+            addNotification({
+              id: eventData.id || `sse-${Date.now()}`,
+              title: eventData.title || "System Alert",
+              message: eventData.message || "",
+              url: eventData.url || "",
+              status: eventData.status || "info",
+            });
+          } else if (eventType === "STATUS_CHANGE" && eventData) {
+            addNotification({
+              id: eventData.local_id || `sse-status-${Date.now()}`,
+              title: eventData.name || "Download Update",
+              message: `Status: ${eventData.item_status || "Updated"}`,
+              status: eventData.item_status || "Downloading",
+              thumbnail: eventData.thumbnail || "",
+              url: eventData.url || "",
+            });
+          }
+        } catch (error) {
+          console.error("Failed to parse SSE notification:", error);
+        }
+      };
+
+      eventSource.onerror = () => {
+        // Handled silently - EventSource will reconnect automatically
+      };
+    } catch {
+      // Fallback
+    }
+
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+    };
+  }, [userId, addNotification]);
+
+  const dismissNotification = useCallback((id: string) => {
     setNotifications((prev) => prev.filter((n) => n.id !== id));
-  };
+  }, []);
 
-  const clearHistory = () => {
+  const clearHistory = useCallback(() => {
     setHistory([]);
     try {
-      localStorage.removeItem("ots-notification-history");
+      localStorage.removeItem(HISTORY_STORAGE_KEY);
     } catch {
-      /* storage is optional */
+      // storage unavailable
     }
-  };
+  }, []);
 
   return {
     notifications,
     history,
+    addNotification,
     dismissNotification,
     clearHistory,
     lastStatusChange,

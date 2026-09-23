@@ -1,21 +1,21 @@
 import base64
 import json
 import re
-import requests
 import time
 from uuid import uuid4
+
+import requests
 from pywidevine.cdm import Cdm
-from pywidevine.pssh import PSSH
 from pywidevine.device import Device
+from pywidevine.pssh import PSSH
+
 from ..constants import HTTP_TIMEOUT, WVN_KEY
 from ..otsconfig import config
-from ..runtimedata import get_logger, account_pool
+from ..runtimedata import account_pool, get_logger
 from ..utils import make_call
 
 logger = get_logger("api.crunchyroll")
-PUBLIC_TOKEN = (
-    "dC1rZGdwMmg4YzNqdWI4Zm4wZnE6eWZMRGZNZnJZdktYaDRKWFMxTEVJMmNDcXUxdjVXYW4="
-)
+PUBLIC_TOKEN = "dC1rZGdwMmg4YzNqdWI4Zm4wZnE6eWZMRGZNZnJZdktYaDRKWFMxTEVJMmNDcXUxdjVXYW4="
 APP_VERSION = "3.60.0"
 BASE_URL = "https://beta-api.crunchyroll.com"
 
@@ -47,9 +47,7 @@ def crunchyroll_login_user(account):
         else:
             headers["Authorization"] = f"Basic {PUBLIC_TOKEN}"
             headers["Connection"] = "Keep-Alive"
-            headers["User-Agent"] = (
-                f"Crunchyroll/{APP_VERSION} Android/13 okhttp/4.12.0"
-            )
+            headers["User-Agent"] = f"Crunchyroll/{APP_VERSION} Android/13 okhttp/4.12.0"
 
             payload = {}
             payload["username"] = account["login"]["email"]
@@ -147,9 +145,7 @@ def crunchyroll_get_token(parsing_index):
         headers = {}
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         if account_pool[parsing_index]["uuid"] == "public_crunchyroll":
-            headers["Authorization"] = (
-                f"Basic {account_pool[parsing_index]['login']['refresh_token']}"
-            )
+            headers["Authorization"] = f"Basic {account_pool[parsing_index]['login']['refresh_token']}"
             headers["ETP-Anonymous-ID"] = str(uuid4())
 
             payload = {}
@@ -164,14 +160,10 @@ def crunchyroll_get_token(parsing_index):
         else:
             headers["Authorization"] = f"Basic {PUBLIC_TOKEN}"
             headers["Connection"] = "Keep-Alive"
-            headers["User-Agent"] = (
-                f"Crunchyroll/{APP_VERSION} Android/13 okhttp/4.12.0"
-            )
+            headers["User-Agent"] = f"Crunchyroll/{APP_VERSION} Android/13 okhttp/4.12.0"
 
             payload = {}
-            payload["refresh_token"] = account_pool[parsing_index]["login"][
-                "refresh_token"
-            ]
+            payload["refresh_token"] = account_pool[parsing_index]["login"]["refresh_token"]
             payload["grant_type"] = "refresh_token"
             payload["scope"] = "offline_access"
             payload["device_id"] = account_pool[parsing_index]["uuid"]
@@ -184,14 +176,10 @@ def crunchyroll_get_token(parsing_index):
                 data=payload,
                 timeout=HTTP_TIMEOUT,
             ).json()
-            account_pool[parsing_index]["login"]["refresh_token"] = token_data.get(
-                "refresh_token"
-            )
+            account_pool[parsing_index]["login"]["refresh_token"] = token_data.get("refresh_token")
 
         account_pool[parsing_index]["login"]["token"] = token_data.get("access_token")
-        account_pool[parsing_index]["login"]["token_expiry"] = (
-            time.time() + token_data.get("expires_in")
-        )
+        account_pool[parsing_index]["login"]["token_expiry"] = time.time() + token_data.get("expires_in")
     return account_pool[parsing_index]["login"]["token"]
 
 
@@ -228,13 +216,9 @@ def crunchyroll_get_search_results(token, search_term, _):
                 item_type = "episode"
 
             try:
-                thumbnail_url = (
-                    item.get("images", {}).get("thumbnail", [])[0][0].get("source")
-                )
+                thumbnail_url = item.get("images", {}).get("thumbnail", [])[0][0].get("source")
             except Exception:
-                thumbnail_url = (
-                    item.get("images", {}).get("poster_wide", [])[0][0].get("source")
-                )
+                thumbnail_url = item.get("images", {}).get("poster_wide", [])[0][0].get("source")
 
             if category.get("type") == "episode":
                 item_url = f"https://www.crunchyroll.com/watch/{item.get('id')}/{item.get('slug')}"
@@ -257,7 +241,7 @@ def crunchyroll_get_search_results(token, search_term, _):
     return search_results
 
 
-def crunchyroll_get_episode_metadata(token, item_id):
+def crunchyroll_get_episode_metadata(token, item_id, item):
     headers = {}
     headers["Authorization"] = f"Bearer {token}"
     headers["Connection"] = "Keep-Alive"
@@ -272,9 +256,7 @@ def crunchyroll_get_episode_metadata(token, item_id):
     # Doesn't seem to work with android bearer.
     # genre_data = make_call(f'{BASE_URL}/content/v2/discover/categories?guid={item_id.split("/")[0]}&locale=en-US', headers=headers)
     # Headers not required, 403 means data does not exist or more likely crunchyroll owns the rights to the media.
-    copyright_data = make_call(
-        f"https://static.crunchyroll.com/copyright/{item_id.split('/')[0]}.json"
-    )
+    copyright_data = make_call(f"https://static.crunchyroll.com/copyright/{item_id.split('/')[0]}.json")
     # intro and credit timestamps (done in downloader step)
     # https://static.crunchyroll.com/skip-events/production/G4VUQ588P.json
     # I believe this url gives you the difference in time between different audio formats or skips, if applicable else 403. Not entirely sure.
@@ -291,9 +273,7 @@ def crunchyroll_get_episode_metadata(token, item_id):
     info = {}
     info["title"] = info_dict.get("title")
     info["description"] = info_dict.get("description")
-    info["image_url"] = (
-        info_dict.get("images", {}).get("thumbnail", [])[0][-1].get("source")
-    )
+    info["image_url"] = info_dict.get("images", {}).get("thumbnail", [])[0][-1].get("source")
     info["show_name"] = info_dict.get("episode_metadata").get("series_title")
     info["season_number"] = info_dict.get("episode_metadata", {}).get("season_number")
     info["episode_number"] = info_dict.get("episode_metadata", {}).get("episode_number")
@@ -306,12 +286,7 @@ def crunchyroll_get_episode_metadata(token, item_id):
     info["item_id"] = item_id.split("/")[0]
     info["explicit"] = (
         True
-        if int(
-            info_dict.get("episode_metadata", {})
-            .get("extended_maturity_rating", {})
-            .get("rating")
-        )
-        != "PG"
+        if int(info_dict.get("episode_metadata", {}).get("extended_maturity_rating", {}).get("rating")) != "PG"
         else False
     )
     info["is_playable"] = True
@@ -383,9 +358,7 @@ def crunchyroll_get_decryption_key(token, item_id, mpd_url, stream_token):
     headers["Content-Type"] = "application/json"
     headers["User-Agent"] = f"Crunchyroll/{APP_VERSION} Android/13 okhttp/4.12.0"
 
-    mpd_content = requests.get(
-        mpd_url, headers=headers, timeout=HTTP_TIMEOUT
-    ).text
+    mpd_content = requests.get(mpd_url, headers=headers, timeout=HTTP_TIMEOUT).text
     match = re.search(r"<cenc:pssh>(.*?)</cenc:pssh>", mpd_content)
     if match:
         pssh = match.group(1)

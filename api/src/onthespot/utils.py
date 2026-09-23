@@ -15,36 +15,38 @@ Sections
 * Miscellaneous        — :func:`is_latest_release`, :func:`open_item`, …
 """
 
+import itertools
 import json
 import os
-import random
 import platform
-import requests
+import random
 import re
 import ssl
+import string
 import subprocess
 import threading
 import time
-import itertools
-import string
 from hashlib import md5
-from urllib.parse import urlparse
 from io import BytesIO
-from PIL import Image
-from mutagen.id3 import ID3, WOAS, USLT, TCMP, COMM
+from urllib.parse import urlparse
+
 import music_tag
+import requests
+from mutagen.id3 import COMM, ID3, TCMP, USLT, WOAS
+from PIL import Image
+
+from .basemodels import QueueItem
+from .constants import HTTP_TIMEOUT, ItemStatus
 from .otsconfig import config
 from .runtimedata import (
-    get_logger,
     download_queue,
     download_queue_lock,
-    progress_hook,
-    notification_hook,
-    pending,
+    get_logger,
     get_rate_limit_delay,
+    notification_hook,
+    progress_hook,
     record_rate_limit,
 )
-from .constants import HTTP_TIMEOUT, ItemStatus
 
 logger = get_logger("utils")
 
@@ -113,9 +115,7 @@ def _cache_ttl_seconds(url, cache_ttl_seconds):
 def _cache_path(url, params, text):
     """Return a deterministic cache path including the complete query string."""
     prepared_url = requests.Request("GET", url, params=params).prepare().url
-    cache_key = md5(
-        f"v2|{int(bool(text))}|{prepared_url}".encode(), usedforsecurity=False
-    ).hexdigest()
+    cache_key = md5(f"v2|{int(bool(text))}|{prepared_url}".encode(), usedforsecurity=False).hexdigest()
     cache_dir = os.path.join(config.get("_cache_dir"), "reqcache")
     os.makedirs(cache_dir, exist_ok=True)
     return cache_key, os.path.join(cache_dir, f"v2-{cache_key}.json")
@@ -177,7 +177,7 @@ def _response_cache_ttl(response, default_ttl):
     return default_ttl
 
 
-class SSLAdapter(requests.adapters.HTTPAdapter):
+class SSLAdapter(requests.adapters.HTTPAdapter):  # ty: ignore[possibly-missing-submodule]
     """HTTPAdapter that injects a custom :class:`ssl.SSLContext`."""
 
     def __init__(self, ssl_context, *args, **kwargs):
@@ -297,12 +297,10 @@ def make_call(
                 )
         except requests.exceptions.Timeout:
             time.sleep(min((2**attempt) * base_delay, max_delay))
-            logger.warning(
-                f"Timeout on {url}, retrying (attempt {attempt + 1}/{max_retries})"
-            )
+            logger.warning(f"Timeout on {url}, retrying (attempt {attempt + 1}/{max_retries})")
             continue
         except requests.exceptions.RequestException as e:
-            logger.error(f"Request exception on {url}: {str(e)}")
+            logger.error(f"Request exception on {url}: {e!s}")
             return None
 
         if response.status_code == 304 and cached_entry:
@@ -393,16 +391,22 @@ def format_local_id(item_id):
 # ---------------------------------------------------------------------------
 # Application helpers
 # ---------------------------------------------------------------------------
-def requeue_item(item: dict) -> None:
-    """Move *item* to the back of the queue and mark it available for RetryWorker to re-add to the pending queue."""
+def requeue_item(item: QueueItem) -> None:
+    """Move *item* to the back of the queue and mark it available for RetryWorker to re-add to the pending queue If not cancelled."""
+    if item.item_status in [
+        ItemStatus.CANCELLED,
+        ItemStatus.UNAVAILABLE,
+        ItemStatus.DOWNLOADED,
+        ItemStatus.DELETED,
+    ] or not config.get("enable_retry_worker", False):
+        return
     with download_queue_lock:
         try:
-            local_id = item["local_id"]
+            local_id = item.local_id
             del download_queue[local_id]
             download_queue[local_id] = item
-            download_queue[local_id]["available"] = True
-            download_queue[local_id]["_active_download"] = False
-            raw_progress = item.get("progress", item.get("item_progress", 0))
+            download_queue[local_id].item_status = ItemStatus.WAITING
+            raw_progress = item.progress
             try:
                 current_progress = int(float(raw_progress or 0))
             except (TypeError, ValueError):
@@ -410,31 +414,11 @@ def requeue_item(item: dict) -> None:
             progress_hook(
                 download_queue[local_id],
                 current_progress,
-                item["item_status"],
+                item.item_status,
             )
         except KeyError:
-            # Item was cleared from the queue while we were processing it.
-            pass
-
-
-def retry_single_item(item: dict) -> None:
-    """Move *item* back to the pending queue for download and removes from downloadqueue
-    FREE THE DownloadQueue LOCK BEFORE CALLING"""
-    with download_queue_lock:
-        try:
-            item["available"] = True
-            item.pop("_manual_cancelled", None)
-            item["item_status"] = ItemStatus.WAITING
-            item["error"] = ""
-            item["_stats_recorded"] = False
-            item["retry_count"] = int(item.get("retry_count", 0) or 0) + 1
-            if item.get("queue_preloaded"):
-                download_queue[item["local_id"]] = item
-            else:
-                del download_queue[item["local_id"]]
-            pending.put_nowait(item)
-        except KeyError as e:
-            logger.error("Error retrying item %s, error: %s", item, str(e))
+            logger.error("Error removing adding back to pending queue %s", item.local_id)
+            return
 
 
 def _version_to_int(version):
@@ -456,6 +440,8 @@ def is_latest_release():
     from .updater import check_for_updates
 
     status = check_for_updates(force=True)
+    if status is None or not status.get("update_available"):
+        return True
     if status.get("update_available"):
         latest = status.get("latest_version")
         notification_hook(
@@ -465,13 +451,12 @@ def is_latest_release():
         )
         logger.info("Update Available: %s", latest)
         return False
-    return True
 
 
 def open_item(item):
     """Open *item* (a file path or URL) with the OS default application."""
     if platform.system() == "Windows":
-        os.startfile(item)
+        os.startfile(item)  # ty: ignore[unresolved-attribute]
     elif platform.system() == "Darwin":  # For MacOS
         subprocess.Popen(["open", item])
     else:  # For Linux and other Unix-like systems
@@ -481,9 +466,7 @@ def open_item(item):
 def jittered_delay() -> float:
     """Return the configured download delay with optional random variance."""
     variance = int(config.get("download_delay_variance"))
-    return max(
-        0, int(config.get("download_delay")) + random.randint(-variance, variance)
-    )
+    return max(0, int(config.get("download_delay")) + random.randint(-variance, variance))
 
 
 # ---------------------------------------------------------------------------
@@ -505,7 +488,7 @@ def sanitize_data(value):
         illegal_chars = ["\\", "/", ":", "*", "?", '"', "<", ">", "|"]
         for illegal_char in illegal_chars:
             value = value.replace(illegal_char, char)
-        while value.endswith(".") or value.endswith(" "):
+        while value.endswith((".", " ")):
             value = value[:-1]
     else:
         value = value.replace("/", char)
@@ -529,9 +512,7 @@ def conv_list_format(items):
             return ""
         return (config.get("metadata_separator")).join(items)
     except TypeError:
-        logger.error(
-            f"Error converting items list for items: {items}, separator: {config.get('metadata_separator')}"
-        )
+        logger.error(f"Error converting items list for items: {items}, separator: {config.get('metadata_separator')}")
         return ""
 
 
@@ -541,7 +522,7 @@ def get_primary_composer(composer_full):
     return re.split(r" [,&;] | & |,|;", composer_full)[0].strip()
 
 
-def format_item_path(item, item_metadata):
+def format_item_path(item: QueueItem, item_metadata):
     """Build the relative file path for *item* using the configured formatter.
 
     Uses the playlist path formatter when *item* belongs to a playlist and the
@@ -555,15 +536,15 @@ def format_item_path(item, item_metadata):
         name = item_metadata.get("title")
         album = item_metadata.get("album_name")
 
-    if item["parent_category"] == "playlist" and config.get("use_playlist_path"):
+    if item.parent_category == "playlist" and config.get("use_playlist_path"):
         path = config.get("playlist_path_formatter")
-    elif item["item_type"] == "track":
+    elif item.item_type == "track":
         path = config.get("track_path_formatter")
-    elif item["item_type"] == "podcast_episode":
+    elif item.item_type == "podcast_episode":
         path = config.get("podcast_path_formatter")
-    elif item["item_type"] == "movie":
+    elif item.item_type == "movie":
         path = config.get("movie_path_formatter")
-    elif item["item_type"] == "episode":
+    elif item.item_type == "episode":
         path = config.get("show_path_formatter")
 
     # A stray closing brace in a user-edited formatter otherwise aborts every
@@ -593,50 +574,43 @@ def format_item_path(item, item_metadata):
 
     item_path = path.format(
         # Universal
-        service=sanitize_data(item.get("item_service")).title(),
+        service=sanitize_data(item.item_service).title(),
         service_id=str(item_metadata.get("item_id")),
         name=sanitize_data(name),
         year=sanitize_data(item_metadata.get("release_year")),
-        explicit=sanitize_data(
-            str(config.get("explicit_label")) if item_metadata.get("explicit") else ""
-        ),
+        explicit=sanitize_data(str(config.get("explicit_label")) if item_metadata.get("explicit") else ""),
         # Audio
         artist=safe_artist,
         composer=safe_composer,
         album=sanitize_data(album),
         album_artist=sanitize_data(item_metadata.get("album_artists")),
         album_type=item_metadata.get("album_type", "single").title(),
-        disc_number=item_metadata.get("disc_number", 1)
-        if not config.get("use_double_digit_path_numbers")
-        else str(item_metadata.get("disc_number", 1)).zfill(2),
-        track_number=item_metadata.get("track_number", 1)
-        if not config.get("use_double_digit_path_numbers")
-        else str(item_metadata.get("track_number", 1)).zfill(2),
+        disc_number=format_path_numbers(item_metadata, "disc_number"),
+        track_number=format_path_numbers(item_metadata, "track_number"),
         genre=sanitize_data(item_metadata.get("genre")),
         label=sanitize_data(item_metadata.get("label")),
-        trackcount=item_metadata.get("total_tracks", 1)
-        if not config.get("use_double_digit_path_numbers")
-        else str(item_metadata.get("total_tracks", 1)).zfill(2),
-        disccount=item_metadata.get("total_discs", 1)
-        if not config.get("use_double_digit_path_numbers")
-        else str(item_metadata.get("total_discs", 1)).zfill(2),
+        trackcount=format_path_numbers(item_metadata, "total_tracks"),
+        disccount=format_path_numbers(item_metadata, "total_discs"),
         isrc=str(item_metadata.get("isrc")),
-        playlist_name=sanitize_data(item.get("playlist_name")),
-        playlist_owner=sanitize_data(item.get("playlist_by")),
-        playlist_number=sanitize_data(item.get("playlist_number")),
+        playlist_name=sanitize_data(item_metadata.get("playlist_name")),
+        playlist_owner=sanitize_data(item_metadata.get("playlist_by")),
+        playlist_number=sanitize_data(item_metadata.get("playlist_number")),
         # Show
         show_name=sanitize_data(item_metadata.get("show_name")),
-        season_number=item_metadata.get("season_number", 1)
-        if not config.get("use_double_digit_path_numbers")
-        else str(item_metadata.get("season_number", 1)).zfill(2),
-        episode_number=item_metadata.get("episode_number", 1)
-        if not config.get("use_double_digit_path_numbers")
-        else str(item_metadata.get("episode_number", 1)).zfill(2),
+        season_number=format_path_numbers(item_metadata, "season_number"),
+        episode_number=format_path_numbers(item_metadata, "episode_number"),
     )
     # Clean up any duplicate consecutive slashes from empty fields
     item_path = re.sub(r"/+", "/", item_path)
 
     return item_path
+
+
+def format_path_numbers(item_metadata, key):
+    if config.get("use_double_digit_path_numbers"):
+        return str(item_metadata.get(key, 1)).zfill(2)
+    else:
+        return item_metadata.get(key, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -645,44 +619,36 @@ def format_item_path(item, item_metadata):
 def run_ffmpeg(command: list) -> None:
     """Run an ffmpeg command, suppressing the console window on Windows."""
     if os.name == "nt":
-        subprocess.check_call(
-            command, shell=False, creationflags=subprocess.CREATE_NO_WINDOW
-        )
+        subprocess.check_call(command, shell=False, creationflags=subprocess.CREATE_NO_WINDOW)
     else:
         subprocess.check_call(command, shell=False)
 
 
-def convert_audio_format(filename, bitrate, default_format, force_bitrate=False):
+def convert_audio_format(filename, target_file_path, bitrate: int, temp_format, force_bitrate=False):
     """Re-encode or copy *filename* to the target format via ffmpeg.
 
     If the file is already in *default_format* and a custom bitrate is not
     requested, the audio stream is copied without re-encoding.
     """
     if os.path.isfile(os.path.abspath(filename)):
-        target_path = os.path.abspath(filename)
-        file_stem, filetype = os.path.splitext(os.path.basename(target_path))
+        target_path = os.path.abspath(target_file_path)
+        _file_stem, target_filetype = os.path.splitext(os.path.basename(target_path))
 
-        temp_name = os.path.join(
-            os.path.dirname(target_path), "~" + file_stem + filetype
-        )
+        temp_file = os.path.abspath(filename)
 
-        if os.path.isfile(temp_name):
-            os.remove(temp_name)
-
-        os.rename(filename, temp_name)
         # Prepare default parameters
         # Existing command initialization
-        command = [config.get("_ffmpeg_bin_path"), "-i", temp_name]
+        command = [config.get("_ffmpeg_bin_path"), "-i", temp_file]
 
         # Set log level based on environment variable
-        if int(os.environ.get("SHOW_FFMPEG_OUTPUT", 0)) == 0:
+        if config.get("debug_mode", False) == False:
             command += ["-loglevel", "error", "-hide_banner", "-nostats"]
 
         # Check if media format is service default
 
-        if filetype == default_format and (config.get("use_custom_file_bitrate") or force_bitrate):
+        if target_filetype == temp_format and force_bitrate:
             command += ["-b:a", bitrate]
-        elif filetype == default_format:
+        elif target_filetype == temp_format:
             command += ["-c:a", "copy"]
         else:
             command += [
@@ -690,9 +656,9 @@ def convert_audio_format(filename, bitrate, default_format, force_bitrate=False)
                 "-ac",
                 "2",
                 "-ar",
-                f"{config.get('file_hertz') if filetype != '.opus' else 48000}",
+                f"{config.get('file_hertz') if target_filetype != '.opus' else 48000}",
                 "-b:a",
-                bitrate,
+                f"{bitrate}k",
             ]
 
         # Add user defined parameters
@@ -700,7 +666,7 @@ def convert_audio_format(filename, bitrate, default_format, force_bitrate=False)
             command.append(param)
 
         # Add output parameter at last
-        command += [filename]
+        command += [target_file_path]
         logger.debug(f"Converting media with ffmpeg. Built commandline {command}")
         # Run subprocess with CREATE_NO_WINDOW flag on Windows
         if os.name == "nt":
@@ -712,7 +678,7 @@ def convert_audio_format(filename, bitrate, default_format, force_bitrate=False)
             )
         else:
             subprocess.check_call(command, shell=False, stdin=subprocess.DEVNULL)
-        os.remove(temp_name)
+        os.remove(temp_file)
 
 
 def convert_video_format(item, output_path, output_format, video_files, item_metadata):
@@ -724,11 +690,7 @@ def convert_video_format(item, output_path, output_format, video_files, item_met
     target_path = os.path.abspath(output_path)
     file_stem, filetype = os.path.splitext(os.path.basename(target_path))
 
-    temp_file_path = (
-        os.path.join(os.path.dirname(target_path), "~" + file_stem + filetype)
-        + "."
-        + output_format
-    )
+    temp_file_path = os.path.join(os.path.dirname(target_path), "~" + file_stem + filetype) + "." + output_format
 
     # Prepare default parameters
     # Existing command initialization
@@ -773,7 +735,7 @@ def convert_video_format(item, output_path, output_format, video_files, item_met
     command += format_map
 
     # Set log level based on environment variable
-    if int(os.environ.get("SHOW_FFMPEG_OUTPUT", 0)) == 0:
+    if config.get("debug_mode", False) == False:
         command += ["-loglevel", "error", "-hide_banner", "-nostats"]
 
     # Add user defined parameters
@@ -815,9 +777,7 @@ def embed_metadata(item, metadata):
         target_path = os.path.abspath(item["file_path"])
         file_stem, filetype = os.path.splitext(os.path.basename(target_path))
 
-        temp_name = os.path.join(
-            os.path.dirname(target_path), "~" + file_stem + filetype
-        )
+        temp_name = os.path.join(os.path.dirname(target_path), "~" + file_stem + filetype)
 
         if os.path.isfile(temp_name):
             os.remove(temp_name)
@@ -827,7 +787,7 @@ def embed_metadata(item, metadata):
         # Existing command initialization
         command = [config.get("_ffmpeg_bin_path"), "-i", temp_name]
 
-        if int(os.environ.get("SHOW_FFMPEG_OUTPUT", 0)) == 0:
+        if config.get("debug_mode", False) == False:
             command += ["-loglevel", "error", "-hide_banner", "-nostats"]
 
         command += ["-c:a", "copy"]
@@ -838,38 +798,36 @@ def embed_metadata(item, metadata):
         # https://wiki.multimedia.cx/index.php?title=FFmpeg_Metadata
 
         if config.get("embed_branding"):
-            branding = "Downloaded by OnTheSpot, https://github.com/justin025/onthespot"
+            branding = "By OnTheSpot" + config.get("version", "v0.0")
             if filetype == ".mp3":
                 # Incorrectly embedded to TXXX:TCMP, patch sent upstream
-                command += ["-metadata", "COMM={}".format(branding)]
+                command += ["-metadata", f"COMM={branding}"]
             else:
-                command += ["-metadata", "comment={}".format(branding)]
+                command += ["-metadata", f"comment={branding}"]
 
         if config.get("embed_service_id"):
             command += ["-metadata", f"{item['item_service']}id={item['item_id']}"]
 
-        for key in metadata.keys():
+        for key in metadata:
             value = metadata[key]
 
             if key == "artists" and config.get("embed_artist"):
-                command += ["-metadata", "artist={}".format(value)]
+                command += ["-metadata", f"artist={value}"]
 
             elif key in ["album_name", "album"] and config.get("embed_album"):
-                command += ["-metadata", "album={}".format(value)]
+                command += ["-metadata", f"album={value}"]
 
             elif key in ["album_artists"] and config.get("embed_albumartist"):
                 if filetype in [".flac", ".ogg", ".opus"]:
-                    command += ["-metadata", "albumartist={}".format(value)]
+                    command += ["-metadata", f"albumartist={value}"]
                 else:
-                    command += ["-metadata", "album_artist={}".format(value)]
+                    command += ["-metadata", f"album_artist={value}"]
 
-            elif key in ["title", "track_title", "tracktitle"] and config.get(
-                "embed_name"
-            ):
-                command += ["-metadata", "title={}".format(value)]
+            elif key in ["title", "track_title", "tracktitle"] and config.get("embed_name"):
+                command += ["-metadata", f"title={value}"]
 
             elif key in ["year", "release_year"] and config.get("embed_year"):
-                command += ["-metadata", "date={}".format(value)]
+                command += ["-metadata", f"date={value}"]
 
             elif key in [
                 "discnumber",
@@ -883,7 +841,7 @@ def embed_metadata(item, metadata):
                         "disk={}/{}".format(value, metadata["total_discs"]),
                     ]
                 elif filetype in [".flac", ".ogg", ".opus"]:
-                    command += ["-metadata", "discnumber={}".format(value)]
+                    command += ["-metadata", f"discnumber={value}"]
                     command += [
                         "-metadata",
                         "disctotal={}".format(metadata["total_discs"]),
@@ -894,11 +852,9 @@ def embed_metadata(item, metadata):
                         "disc={}/{}".format(value, metadata["total_discs"]),
                     ]
 
-            elif key in ["track_number", "tracknumber"] and config.get(
-                "embed_tracknumber"
-            ):
+            elif key in ["track_number", "tracknumber"] and config.get("embed_tracknumber"):
                 if filetype in [".flac", ".ogg", ".opus"]:
-                    command += ["-metadata", "tracknumber={}".format(value)]
+                    command += ["-metadata", f"tracknumber={value}"]
                     command += [
                         "-metadata",
                         "tracktotal={}".format(metadata.get("total_tracks")),
@@ -910,81 +866,81 @@ def embed_metadata(item, metadata):
                     ]
 
             elif key == "genre" and config.get("embed_genre"):
-                command += ["-metadata", "genre={}".format(value)]
+                command += ["-metadata", f"genre={value}"]
 
             elif key == "performers" and config.get("embed_performers"):
                 if filetype == ".mp3":
-                    command += ["-metadata", "TPE1={}".format(value)]
+                    command += ["-metadata", f"TPE1={value}"]
                 else:
-                    command += ["-metadata", "performer={}".format(value)]
+                    command += ["-metadata", f"performer={value}"]
 
             elif key == "producers" and config.get("embed_producers"):
                 if filetype == ".mp3":
-                    command += ["-metadata", "TIPL={}".format(value)]
+                    command += ["-metadata", f"TIPL={value}"]
                 else:
-                    command += ["-metadata", "producer={}".format(value)]
+                    command += ["-metadata", f"producer={value}"]
 
             elif key == "writers" and config.get("embed_writers"):
                 if filetype == ".mp3":
-                    command += ["-metadata", "TEXT={}".format(value)]
+                    command += ["-metadata", f"TEXT={value}"]
                 else:
-                    command += ["-metadata", "author={}".format(value)]
+                    command += ["-metadata", f"author={value}"]
 
             elif key == "composer" and config.get("embed_composer"):
                 if config.get("shorten_composer_tag"):
                     value = get_primary_composer(value)
                 if filetype == ".mp3":
-                    command += ["-metadata", "TCOM={}".format(value)]
+                    command += ["-metadata", f"TCOM={value}"]
                 else:
-                    command += ["-metadata", "composer={}".format(value)]
+                    command += ["-metadata", f"composer={value}"]
 
             elif key == "label" and config.get("embed_label"):
                 if filetype in [".flac", ".ogg", ".opus"]:
-                    command += ["-metadata", "label={}".format(value)]
+                    command += ["-metadata", f"label={value}"]
                 else:
-                    command += ["-metadata", "publisher={}".format(value)]
+                    command += ["-metadata", f"publisher={value}"]
 
             elif key == "copyright" and config.get("embed_copyright"):
-                command += ["-metadata", "copyright={}".format(value)]
+                command += ["-metadata", f"copyright={value}"]
 
             elif key == "description" and config.get("embed_description"):
                 if filetype == ".mp3":
                     # Incorrectly embedded to TXXX:COMM, patch sent upstream
-                    command += ["-metadata", "COMM={}".format(value)]
+                    command += ["-metadata", f"COMM={value}"]
                 else:
-                    command += ["-metadata", "comment={}".format(value)]
+                    command += ["-metadata", f"comment={value}"]
 
             elif key == "language" and config.get("embed_language"):
                 if filetype == ".mp3":
-                    command += ["-metadata", "TLAN={}".format(value)]
+                    command += ["-metadata", f"TLAN={value}"]
                 else:
-                    command += ["-metadata", "language={}".format(value)]
+                    command += ["-metadata", f"language={value}"]
 
             elif key == "isrc" and config.get("embed_isrc"):
                 if filetype == ".mp3":
-                    command += ["-metadata", "TSRC={}".format(value)]
+                    command += ["-metadata", f"TSRC={value}"]
                 else:
-                    command += ["-metadata", "isrc={}".format(value)]
+                    command += ["-metadata", f"isrc={value}"]
 
             elif key == "length" and config.get("embed_length"):
                 if filetype == ".mp3":
-                    command += ["-metadata", "TLEN={}".format(value)]
+                    command += ["-metadata", f"TLEN={value}"]
                 else:
-                    command += ["-metadata", "length={}".format(value)]
+                    command += ["-metadata", f"length={value}"]
 
             elif key == "bpm" and config.get("embed_bpm"):
                 if filetype == ".mp3":
-                    command += ["-metadata", "TBPM={}".format(value)]
+                    command += ["-metadata", f"TBPM={value}"]
                 elif filetype in ["m4a", "mp4", "mov"]:
-                    command += ["-metadata", "tmpo={}".format(value)]
+                    command += ["-metadata", f"tmpo={value}"]
                 else:
-                    command += ["-metadata", "bpm={}".format(value)]
+                    command += ["-metadata", f"bpm={value}"]
 
             elif key == "key" and config.get("embed_key"):
                 if filetype == ".mp3":
-                    command += ["-metadata", "TKEY={}".format(value)]
+                    command += ["-metadata", f"TKEY={value}"]
                 else:
-                    command += ["-metadata", "initialkey={}".format(value)]
+                    command += ["-metadata", f"initialkey={value}"]
 
             elif key == "album_type" and config.get("embed_compilation"):
                 if filetype == ".mp3":
@@ -1002,52 +958,52 @@ def embed_metadata(item, metadata):
             elif key == "item_url" and config.get("embed_url"):
                 if filetype == ".mp3":
                     # Incorrectly embedded to TXXX:WOAS, patch sent upstream
-                    command += ["-metadata", "WOAS={}".format(value)]
+                    command += ["-metadata", f"WOAS={value}"]
                 else:
-                    command += ["-metadata", "website={}".format(value)]
+                    command += ["-metadata", f"website={value}"]
 
             elif key == "lyrics" and config.get("embed_lyrics"):
                 if filetype == ".mp3":
                     # Incorrectly embedded to TXXX:USLT, patch sent upstream
-                    command += ["-metadata", "USLT={}".format(value)]
+                    command += ["-metadata", f"USLT={value}"]
                 else:
-                    command += ["-metadata", "lyrics={}".format(value)]
+                    command += ["-metadata", f"lyrics={value}"]
 
             elif key == "explicit" and config.get("embed_explicit"):
                 if filetype == ".mp3":
-                    command += ["-metadata", "ITUNESADVISORY={}".format(value)]
+                    command += ["-metadata", f"ITUNESADVISORY={value}"]
                 else:
-                    command += ["-metadata", "explicit={}".format(value)]
+                    command += ["-metadata", f"explicit={value}"]
 
             elif key == "upc" and config.get("embed_upc"):
-                command += ["-metadata", "upc={}".format(value)]
+                command += ["-metadata", f"upc={value}"]
 
             elif key == "time_signature" and config.get("embed_timesignature"):
-                command += ["-metadata", "timesignature={}".format(value)]
+                command += ["-metadata", f"timesignature={value}"]
 
             elif key == "acousticness" and config.get("embed_acousticness"):
-                command += ["-metadata", "acousticness={}".format(value)]
+                command += ["-metadata", f"acousticness={value}"]
 
             elif key == "danceability" and config.get("embed_danceability"):
-                command += ["-metadata", "danceability={}".format(value)]
+                command += ["-metadata", f"danceability={value}"]
 
             elif key == "instrumentalness" and config.get("embed_instrumentalness"):
-                command += ["-metadata", "instrumentalness={}".format(value)]
+                command += ["-metadata", f"instrumentalness={value}"]
 
             elif key == "liveness" and config.get("embed_liveness"):
-                command += ["-metadata", "liveness={}".format(value)]
+                command += ["-metadata", f"liveness={value}"]
 
             elif key == "loudness" and config.get("embed_loudness"):
-                command += ["-metadata", "loudness={}".format(value)]
+                command += ["-metadata", f"loudness={value}"]
 
             elif key == "speechiness" and config.get("embed_speechiness"):
-                command += ["-metadata", "speechiness={}".format(value)]
+                command += ["-metadata", f"speechiness={value}"]
 
             elif key == "energy" and config.get("embed_energy"):
-                command += ["-metadata", "energy={}".format(value)]
+                command += ["-metadata", f"energy={value}"]
 
             elif key == "valence" and config.get("embed_valence"):
-                command += ["-metadata", "valence={}".format(value)]
+                command += ["-metadata", f"valence={value}"]
 
         # Add output parameter at last
         command += [item["file_path"]]
@@ -1114,7 +1070,7 @@ def set_music_thumbnail(filename, metadata):
             command = [config.get("_ffmpeg_bin_path"), "-i", temp_name]
 
             # Set log level based on environment variable
-            if int(os.environ.get("SHOW_FFMPEG_OUTPUT", 0)) == 0:
+            if config.get("debug_mode", False) == False:
                 command += ["-loglevel", "error", "-hide_banner", "-nostats"]
 
             command += [
@@ -1199,9 +1155,7 @@ def fix_mp3_metadata(filename):
         id3["WOAS"] = WOAS(url=id3["TXXX:WOAS"].text[0])
         del id3["TXXX:WOAS"]
     if "TXXX:USLT" in id3:
-        id3.add(
-            USLT(encoding=3, lang="und", desc="desc", text=id3["TXXX:USLT"].text[0])
-        )
+        id3.add(USLT(encoding=3, lang="und", desc="desc", text=id3["TXXX:USLT"].text[0]))
         del id3["TXXX:USLT"]
     if "TXXX:COMM" in id3:
         id3["COMM"] = COMM(encoding=3, lang="und", text=id3["TXXX:COMM"].text[0])
@@ -1264,9 +1218,7 @@ def add_to_m3u_file(item, item_metadata):
             else str(item_metadata.get("track_number", 1)).zfill(2),
             genre=item_metadata.get("genre"),
             label=item_metadata.get("label"),
-            explicit=str(config.get("explicit_label"))
-            if item_metadata.get("explicit")
-            else "",
+            explicit=str(config.get("explicit_label")) if item_metadata.get("explicit") else "",
             trackcount=item_metadata.get("total_tracks", 1)
             if not config.get("use_double_digit_path_numbers")
             else str(item_metadata.get("total_tracks", 1)).zfill(2),
@@ -1306,9 +1258,7 @@ def strip_metadata(item):
         target_path = os.path.abspath(item["file_path"])
         file_stem, filetype = os.path.splitext(os.path.basename(target_path))
 
-        temp_name = os.path.join(
-            os.path.dirname(target_path), "~" + file_stem + filetype
-        )
+        temp_name = os.path.join(os.path.dirname(target_path), "~" + file_stem + filetype)
 
         if os.path.isfile(temp_name):
             os.remove(temp_name)
@@ -1318,7 +1268,7 @@ def strip_metadata(item):
         # Existing command initialization
         command = [config.get("_ffmpeg_bin_path"), "-i", temp_name]
 
-        if int(os.environ.get("SHOW_FFMPEG_OUTPUT", 0)) == 0:
+        if config.get("debug_mode", False) == False:
             command += ["-loglevel", "error", "-hide_banner", "-nostats"]
 
         command += ["-map", "0:a", "-map_metadata", "-1", "-c:a", "copy"]

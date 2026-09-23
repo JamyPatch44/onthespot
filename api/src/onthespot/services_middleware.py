@@ -1,12 +1,13 @@
-import queue
-import os
-
 import json as _json
+import os
+import queue
+
 import requests
 from librespot.audio.decoders import AudioQuality, VorbisOnlyAudioQuality
 from librespot.metadata import EpisodeId, TrackId
 from yt_dlp import YoutubeDL
 
+from .accounts import get_account_token
 from .api.apple_music import (
     apple_music_get_decryption_key,
     apple_music_get_webplayback_info,
@@ -23,23 +24,20 @@ from .api.deezer import (
     get_song_info_from_deezer_website,
 )
 from .api.qobuz import qobuz_get_file_url
-from .api.tidal import tidal_get_mpd_data
 from .api.spotify import reinit_spotify_session
-
-
-from .accounts import get_account_token
+from .api.tidal import tidal_get_mpd_data
+from .basemodels import QueueItem
 from .constants import ItemStatus
-from .runtimedata import get_logger, progress_hook, wait_for_download_resume, yt_dlp_progress_hook
-from .resources.exceptions import TrackUnavailableError, DownloadCancelled
 from .otsconfig import config
+from .resources.exceptions import DownloadCancelled, TrackUnavailableError
+from .runtimedata import get_logger, progress_hook, wait_for_download_resume, yt_dlp_progress_hook
 from .utils import requeue_item, run_ffmpeg
 from .youtube_auth import is_youtube_url, youtube_ydl_options
-
 
 logger = get_logger("services_middleware")
 
 
-def _download_http_with_resume(item, url, temp_path, headers=None):
+def _download_http_with_resume(item: QueueItem, url, temp_path, headers=None):
     """Stream a URL into *temp_path*, continuing a partial file when possible."""
     headers = dict(headers or {})
     existing = os.path.getsize(temp_path) if os.path.isfile(temp_path) else 0
@@ -58,14 +56,14 @@ def _download_http_with_resume(item, url, temp_path, headers=None):
         for chunk in response.iter_content(chunk_size=config.get("download_chunk_size", 65536)):
             if not chunk:
                 continue
-            if item.get("item_status") == ItemStatus.CANCELLED:
+            if item.item_status == ItemStatus.CANCELLED:
                 raise DownloadCancelled("Download cancelled by user.")
-            wait_for_download_resume(item)
+            # wait_for_download_resume(item)
             downloaded += len(chunk)
             audio_file.write(chunk)
             progress_hook(
                 item,
-                int((downloaded / total_size) * 100) if total_size else item.get("progress", 0),
+                int((downloaded / total_size) * 100) if total_size else item.progress,
                 ItemStatus.DOWNLOADING,
                 downloaded_bytes=downloaded,
                 total_bytes=total_size or None,
@@ -73,8 +71,8 @@ def _download_http_with_resume(item, url, temp_path, headers=None):
     return downloaded
 
 
-def download_spotify(item, item_id, item_type, token, temp_path):
-    default_format = ""
+def download_spotify(item: QueueItem, item_id, item_type, token, temp_path):
+    default_format = ".mp3"
     temp_path += default_format
 
     if item_type == "track":
@@ -82,16 +80,16 @@ def download_spotify(item, item_id, item_type, token, temp_path):
     else:
         audio_key = EpisodeId.from_base62(item_id)
 
-    quality = AudioQuality.HIGH
-    bitrate = "160k"
-    if token.get_user_attribute("type") == "premium" and item_type == "track":
-        quality = AudioQuality.VERY_HIGH
-        bitrate = "320k"
+    if item.download_format != "":
+        quality = AudioQuality.HIGH
+        bitrate = "160k"
+    else:
+        if token.get_user_attribute("type") == "premium" and item_type == "track":
+            quality = AudioQuality.VERY_HIGH
+            bitrate = "320k"
 
     try:
-        stream = token.content_feeder().load(
-            audio_key, VorbisOnlyAudioQuality(quality), False, None
-        )
+        stream = token.content_feeder().load(audio_key, VorbisOnlyAudioQuality(quality), False, None)
     except RuntimeError as exc:
         if "alternative track" in str(exc).lower():
             raise TrackUnavailableError(item_id) from exc
@@ -106,11 +104,9 @@ def download_spotify(item, item_id, item_type, token, temp_path):
 
     with open(temp_path, "wb") as audio_file:
         while downloaded < total_size:
-            if item["item_status"] == ItemStatus.CANCELLED:
+            if item.item_status == ItemStatus.CANCELLED:
                 raise DownloadCancelled("Download cancelled by user.")
-            chunk = stream.input_stream.stream().read(
-                config.get("download_chunk_size")
-            )
+            chunk = stream.input_stream.stream().read(config.get("download_chunk_size"))
             downloaded += len(chunk)
             if chunk:
                 audio_file.write(chunk)
@@ -129,24 +125,39 @@ def download_spotify(item, item_id, item_type, token, temp_path):
 
     return default_format, bitrate
 
-def download_deezer(item, item_id, token, temp_path):
-    song = get_song_info_from_deezer_website(token, item_id)
-    song_quality = 1
-    song_format = "MP3_128"
-    bitrate = "128k"
-    default_format = ".mp3"
 
-    if int(song.get("FILESIZE_FLAC", 0)) > 0:
-        song_quality, song_format, bitrate, default_format = (
-            9,
-            "FLAC",
-            "1411k",
-            ".flac",
-        )
-    elif int(song.get("FILESIZE_MP3_320", 0)) > 0:
-        song_quality, song_format, bitrate = 3, "MP3_320", "320k"
-    elif int(song.get("FILESIZE_MP3_256", 0)) > 0:
-        song_quality, song_format, bitrate = 5, "MP3_256", "256k"
+def _select_deezer_quality(song, item: QueueItem):
+    """
+    Selects the best fitting format given the preferred profile and available ones.
+
+    Cascades from best to worst in case of unavailability
+    """
+    if item.download_profile.bitrate > 1000 and int(song.get("FILESIZE_FLAC", 0)) > 0:
+        return 9, "FLAC", "1411k", ".flac"
+
+    if item.download_profile.bitrate > 256 and int(song.get("FILESIZE_MP3_320", 0)) > 0:
+        return 5, "MP3_320", "320k", ".mp3"
+
+    if item.download_profile.bitrate > 129 and int(song.get("FILESIZE_MP3_256", 0)) > 0:
+        return 3, "MP3_256", "256k", ".mp3"
+
+    return 1, "MP3_128", "128k", ".mp3"
+
+
+def download_deezer(item: QueueItem, item_id, token, temp_path):
+    song = get_song_info_from_deezer_website(token, item_id)
+
+    if item.download_format in ["mp3", "flac"]:
+        song_quality, song_format, bitrate, default_format = _select_deezer_quality(song, item)
+    else:
+        if int(song.get("FILESIZE_FLAC", 0)) > 0:
+            song_quality, song_format, bitrate, default_format = 9, "FLAC", "1411k", ".flac"
+        elif int(song.get("FILESIZE_MP3_320", 0)) > 0:
+            song_quality, song_format, bitrate = 3, "MP3_320", "320k"
+        elif int(song.get("FILESIZE_MP3_256", 0)) > 0:
+            song_quality, song_format, bitrate = 5, "MP3_256", "256k"
+        else:
+            song_quality, song_format, bitrate, default_format = 1, "MP3_128", "128k", ".mp3"
 
     temp_path += default_format
 
@@ -164,9 +175,7 @@ def download_deezer(item, item_id, token, temp_path):
                 "media": [
                     {
                         "type": "FULL",
-                        "formats": [
-                            {"cipher": "BF_CBC_STRIPE", "format": song_format}
-                        ],
+                        "formats": [{"cipher": "BF_CBC_STRIPE", "format": song_format}],
                     }
                 ],
                 "track_tokens": [song["TRACK_TOKEN"]],
@@ -190,17 +199,13 @@ def download_deezer(item, item_id, token, temp_path):
         song_format = "MP3_128"
         bitrate = "128k"
         default_format = ".mp3"
-        url_key = genurlkey(
-            song["SNG_ID"], song["MD5_ORIGIN"], song["MEDIA_VERSION"], song_quality
-        )
+        url_key = genurlkey(song["SNG_ID"], song["MD5_ORIGIN"], song["MEDIA_VERSION"], song_quality)
         url = f"https://e-cdns-proxy-{song['MD5_ORIGIN'][0]}.dzcdn.net/mobile/1/{url_key.decode()}"
 
     response = requests.get(url, stream=True, timeout=60)
     if response.status_code != 200:
-        logger.info(
-            "Deezer download failed %s", response.status_code
-        )
-        item["item_status"] = ItemStatus.FAILED
+        logger.info("Deezer download failed %s", response.status_code)
+        item.item_status = ItemStatus.FAILED
         requeue_item(item)
         return default_format, bitrate
 
@@ -208,13 +213,11 @@ def download_deezer(item, item_id, token, temp_path):
     downloaded = 0
     data_chunks = b""
 
-    for chunk in response.iter_content(
-        chunk_size=config.get("download_chunk_size")
-    ):
+    for chunk in response.iter_content(chunk_size=config.get("download_chunk_size")):
         downloaded += len(chunk)
         data_chunks += chunk
         if downloaded != total_size:
-            if item["item_status"] == ItemStatus.CANCELLED:
+            if item.item_status == ItemStatus.CANCELLED:
                 raise DownloadCancelled("Download cancelled by user.")
             progress_hook(
                 item,
@@ -231,9 +234,8 @@ def download_deezer(item, item_id, token, temp_path):
 
     return default_format, bitrate
 
-def download_via_ytdlp_audio(
-    item, item_metadata, service, item_id, token, temp_path, item_type
-):
+
+def download_via_ytdlp_audio(item: QueueItem, item_metadata, service, item_id, token, temp_path, item_type):
     """Download audio via yt-dlp (SoundCloud, Tidal, YouTube Music)."""
     item_url = item_metadata["item_url"]
     default_format = ""
@@ -259,23 +261,17 @@ def download_via_ytdlp_audio(
         # Get MPD manifest with error handling
         mpd_data = tidal_get_mpd_data(token, item_id)
         if not mpd_data:
-            raise RuntimeError(
-                f"Tidal: Failed to get MPD manifest for track {item_id}"
-            )
+            raise RuntimeError(f"Tidal: Failed to get MPD manifest for track {item_id}")
 
         # Check if manifest is JSON with direct URLs (common for AAC/MP4 tracks)
 
         try:
             manifest_json = _json.loads(mpd_data)
-            if "urls" in manifest_json and manifest_json["urls"]:
+            if manifest_json.get("urls"):
                 direct_url = manifest_json["urls"][0]
-                logger.info(
-                    "Tidal: Direct URL detected", extra={"url": direct_url[:80]}
-                )
+                logger.info("Tidal: Direct URL detected", extra={"url": direct_url[:80]})
                 headers = {"Authorization": f"Bearer {token['access_token']}"}
-                resp = requests.get(
-                    direct_url, headers=headers, stream=True, timeout=60
-                )
+                resp = requests.get(direct_url, headers=headers, stream=True, timeout=60)
                 resp.raise_for_status()
                 with open(temp_path, "wb") as f:
                     for chunk in resp.iter_content(chunk_size=65536):
@@ -314,17 +310,21 @@ def download_via_ytdlp_audio(
         # item_url = item_metadata["item_url"]
         default_format = ".m4a"
         bitrate = "128k"
-        ydl_opts["format"] = "bestaudio[ext=m4a]"
+        ydl_opts["format"] = "bestaudio"
         # needed for download
         ydl_opts["extractor_args"] = {
             "youtube": {
-                "player_client": ["android_vr"],
-            }
+                "player_client": ["mweb", "tv"],
+            },
+            "youtubepot-bgutilhttp": {
+                "base_url": ["http://bgutil-provider:4416"],
+            },
         }
         ydl_opts.update(youtube_ydl_options())
 
     ydl_opts.update(
         {
+            "verbose": config.get("debug_mode", False),
             "quiet": False,
             "no_warnings": True,
             "noprogress": True,
@@ -353,9 +353,8 @@ def download_via_ytdlp_audio(
 
     return default_format, bitrate
 
-def download_http_stream(
-    item, item_metadata, service, item_id, token, temp_path
-):
+
+def download_http_stream(item: QueueItem, item_metadata, service, item_id, token, temp_path):
     """Download a direct HTTP stream (Bandcamp, Qobuz)."""
     if service == "qobuz":
         default_format = ".flac"
@@ -371,31 +370,26 @@ def download_http_stream(
     downloaded = 0
 
     with open(temp_path, "wb") as audio_file:
-        for chunk in response.iter_content(
-            chunk_size=config.get("download_chunk_size", 1024)
-        ):
+        for chunk in response.iter_content(chunk_size=config.get("download_chunk_size", 1024)):
             if not chunk:
                 continue
             downloaded += len(chunk)
             audio_file.write(chunk)
             if total_size > 0 and downloaded != total_size:
-                if item["item_status"] == ItemStatus.CANCELLED:
+                if item.item_status == ItemStatus.CANCELLED:
                     raise DownloadCancelled("Download cancelled by user.")
                 progress_hook(item, int((downloaded / total_size) * 100))
 
     return default_format, bitrate
 
-def download_apple_music(item, item_id, token, temp_path):
+
+def download_apple_music(item: QueueItem, item_id, token, temp_path):
     default_format = ".m4a"
     bitrate = "256k"
 
     webplayback_info = apple_music_get_webplayback_info(token, item_id)
     stream_url = next(
-        (
-            asset["URL"]
-            for asset in webplayback_info["assets"]
-            if asset["flavor"] == "28:ctrp256"
-        ),
+        (asset["URL"] for asset in webplayback_info["assets"] if asset["flavor"] == "28:ctrp256"),
         None,
     )
     if not stream_url:
@@ -452,7 +446,8 @@ def download_apple_music(item, item_id, token, temp_path):
 
     return default_format, bitrate
 
-def download_crunchyroll(item, item_metadata, item_id, token, temp_path):
+
+def download_crunchyroll(item: QueueItem, item_metadata, item_id, token, temp_path):
     """Download encrypted Crunchyroll video/audio streams and subtitles."""
     skip_url = "https://static.crunchyroll.com/skip-events/production/"
     ydl_base_opts = {
@@ -467,37 +462,29 @@ def download_crunchyroll(item, item_metadata, item_id, token, temp_path):
         "retries": 3,
         "fragment_retries": 3,
     }
-    ydl_base_opts["progress_hooks"] = [
-        lambda d: yt_dlp_progress_hook(item, d)
-    ]
+    ydl_base_opts["progress_hooks"] = [lambda d: yt_dlp_progress_hook(item, d)]
 
     encrypted_files = []
     video_files = []
     subtitle_formats = []
-    preferred_langs = (
-        config.get("preferred_audio_language").replace(" ", "").split(",")
-    )
+    preferred_langs = config.get("preferred_audio_language").replace(" ", "").split(",")
 
     for version in item_metadata["versions"]:
         lang = version["audio_locale"]
-        if lang not in preferred_langs and not config.get(
-            "download_all_available_audio"
-        ):
+        if lang not in preferred_langs and not config.get("download_all_available_audio"):
             continue
 
         try:
             (
                 mpd_url,
                 stream_token,
-                audio_locale,
+                _audio_locale,
                 headers,
-                versions,
+                _versions,
                 extra_subtitles,
             ) = crunchyroll_get_mpd_info(token, version["guid"])
             subtitle_formats += extra_subtitles
-            decryption_key = crunchyroll_get_decryption_key(
-                token, version["guid"], mpd_url, stream_token
-            )
+            decryption_key = crunchyroll_get_decryption_key(token, version["guid"], mpd_url, stream_token)
         except Exception as exc:
             logger.error(str(exc), exc_info=exc)
             continue
@@ -551,9 +538,7 @@ def download_crunchyroll(item, item_metadata, item_id, token, temp_path):
         if not config.get("raw_media_download") and config.get("download_chapters"):
             chapter_file = temp_path + f" - {lang}.txt"
             if not os.path.exists(chapter_file):
-                resp = requests.get(
-                    f"{skip_url}{version['guid']}.json", timeout=20
-                )
+                resp = requests.get(f"{skip_url}{version['guid']}.json", timeout=20)
                 if resp.status_code == 200:
                     chapter_data = resp.json()
                     with open(chapter_file, "w", encoding="utf-8") as cf:
@@ -606,7 +591,7 @@ def download_crunchyroll(item, item_metadata, item_id, token, temp_path):
 
     # Subtitles
     if config.get("download_subtitles"):
-        item["item_status"] = ItemStatus.DOWNLOADING_SUBTITLES
+        item.item_status = ItemStatus.DOWNLOADING_SUBTITLES
         preferred_sub_langs = config.get("preferred_subtitle_language").split(",")
         seen_langs = []
         for sub in subtitle_formats:
@@ -614,9 +599,7 @@ def download_crunchyroll(item, item_metadata, item_id, token, temp_path):
             if lang in seen_langs:
                 continue
             seen_langs.append(lang)
-            if lang not in preferred_sub_langs and not config.get(
-                "download_all_available_subtitles"
-            ):
+            if lang not in preferred_sub_langs and not config.get("download_all_available_subtitles"):
                 continue
             sub_file = temp_path + f" - {lang}.{sub['extension']}"
             if not os.path.exists(sub_file):
@@ -634,7 +617,8 @@ def download_crunchyroll(item, item_metadata, item_id, token, temp_path):
 
     return video_files
 
-def download_generic(item, item_id, temp_path):
+
+def download_generic(item: QueueItem, item_id, temp_path):
     """Download using yt-dlp's generic extractor (any URL)."""
 
     ydl_opts = {
@@ -661,10 +645,11 @@ def download_generic(item, item_id, temp_path):
 
     with YoutubeDL(ydl_opts) as downloader:
         info = downloader.extract_info(item_id, download=False)
-        item["file_path"] = downloader.prepare_filename(info)
+        item.file_path = downloader.prepare_filename(info)
         downloader.download(item_id)
 
-def download_generic_v2a(item, item_id, temp_path):
+
+def download_generic_v2a(item: QueueItem, item_id, temp_path):
     """Download using yt-dlp's generic extractor (any URL) but extracts only audio"""
 
     ydl_opts = {
@@ -698,7 +683,7 @@ def download_generic_v2a(item, item_id, temp_path):
 
     with YoutubeDL(ydl_opts) as downloader:
         info = downloader.extract_info(item_id, download=False)
-        item["file_path"] = downloader.prepare_filename(info)
+        item.file_path = downloader.prepare_filename(info)
         downloader.download(item_id)
 
     return config.get("v2a_preferred_codec"), config.get("v2a_preferred_bitrate")

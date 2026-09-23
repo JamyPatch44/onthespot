@@ -1,9 +1,11 @@
-from hashlib import md5
 import json
 import os
+from hashlib import md5
+
 from yt_dlp import YoutubeDL, extractor
+
 from ..otsconfig import config
-from ..runtimedata import get_logger, account_pool
+from ..runtimedata import account_pool, get_logger
 from ..youtube_auth import is_youtube_url, youtube_ydl_options
 
 logger = get_logger("api.generic")
@@ -35,7 +37,7 @@ def generic_add_account():
     config.save()
 
 
-def generic_get_track_metadata(_, url):
+def generic_get_track_metadata(_, url, item) -> list | dict | None:
     request_key = md5(f"{url}".encode(), usedforsecurity=False).hexdigest()
     cache_dir = os.path.join(config.get("_cache_dir"), "reqcache")
     os.makedirs(cache_dir, exist_ok=True)
@@ -45,28 +47,23 @@ def generic_get_track_metadata(_, url):
             logger.debug('URL "%s" cache found ! HASH: %s', url, request_key)
             with open(req_cache_file, "r", encoding="utf-8") as cf:
                 info_dict = json.load(cf)
-        
+
         else:
             ydl_opts = {"quiet": True, "extract_flat": True}
             if is_youtube_url(url):
                 ydl_opts.update(youtube_ydl_options())
-            info_dict = YoutubeDL(ydl_opts).extract_info(
-                url, download=False
-            )
+            info_dict = YoutubeDL(ydl_opts).extract_info(url, download=False)
             json_output = json.dumps(info_dict, indent=4)
             with open(req_cache_file, "w", encoding="utf-8") as cf:
                 cf.write(json_output)
 
-        if "entries" in info_dict:
-            if len(info_dict.get("entries", [])) > 1:
-                # Circular import
-                from ..parse_item import parse_url
+        if "entries" in info_dict and len(info_dict.get("entries", [])) > 1:
+            for entry in info_dict.get("entries", []):
+                logger.debug("Found entry: %s", entry["webpage_url"])
+                url_dict = []
+                url_dict.append(entry["webpage_url"])
+            return url_dict
 
-                for entry in info_dict.get("entries", []):
-                    logger.debug("Found entry: %s", entry["webpage_url"])
-                    parse_url(entry["webpage_url"])
-                return True
-    
         info = {}
         info["title"] = info_dict.get("title")
         info["artists"] = info_dict.get("extractor")
@@ -77,10 +74,9 @@ def generic_get_track_metadata(_, url):
 
         return info
     except Exception as exc:
-        logger.error(
-            "Error extracting metadata for URL %s: %s", url, str(exc), exc_info=True
-        )
+        logger.error("Error extracting metadata for URL %s: %s", url, str(exc), exc_info=True)
         return None
+
 
 def generic_list_extractors():
     extractors = extractor.gen_extractors()

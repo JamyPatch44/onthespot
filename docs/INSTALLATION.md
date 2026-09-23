@@ -13,11 +13,14 @@ Requirements:
 Clone the repository and select this branch:
 
 ```bash
-git clone --branch fastapi-dev --single-branch https://github.com/JamyPatch44/onthespot.git
+git clone --branch fastapi-dev --single-branch https://github.com/ots-downloader/onthespot.git
 cd onthespot
 ```
 
 Copy the example environment file, review the paths, then build and start:
+
+> [!WARNING] 
+> You will need to create at least the `otsdata` folder to avoid permission errors
 
 ```bash
 cp .env.example .env
@@ -46,6 +49,9 @@ docker compose down
 ### Persistent folders
 
 The default `.env.example` stores data under `./otsdata`:
+
+> [!WARNING] 
+> You will need to create at least the `otsdata` folder to avoid permission errors
 
 | Variable | Container destination | Contents |
 | --- | --- | --- |

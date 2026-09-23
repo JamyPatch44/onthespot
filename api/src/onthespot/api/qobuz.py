@@ -1,13 +1,15 @@
 import base64
-from collections import OrderedDict
 import hashlib
 import re
 import time
 import uuid
+from collections import OrderedDict
+
 import requests
+
 from ..constants import HTTP_TIMEOUT
 from ..otsconfig import config
-from ..runtimedata import get_logger, account_pool
+from ..runtimedata import account_pool, get_logger
 from ..utils import conv_list_format, make_call
 
 logger = get_logger("api.qobuz")
@@ -31,9 +33,7 @@ def qobuz_add_account(email, password):
 
         bundle_url = bundle_url_match.group(1)
 
-        response = session.get(
-            "https://play.qobuz.com" + bundle_url, timeout=HTTP_TIMEOUT
-        )
+        response = session.get("https://play.qobuz.com" + bundle_url, timeout=HTTP_TIMEOUT)
         bundle = response.text
 
         app_id_regex = r'production:{api:{appId:"(?P<app_id>\d{9})",appSecret:"(\w{32})'
@@ -94,9 +94,7 @@ def qobuz_add_account(email, password):
         params["password"] = password
         params["app_id"] = app_id
 
-        login_data = requests.get(
-            login_url, params=params, timeout=HTTP_TIMEOUT
-        ).json()
+        login_data = requests.get(login_url, params=params, timeout=HTTP_TIMEOUT).json()
 
         cfg_copy = config.get("accounts").copy()
         new_user = {
@@ -186,9 +184,7 @@ def qobuz_get_search_results(token, search_term, content_types):
     search_results = []
 
     if "track" in content_types:
-        track_data = make_call(
-            f"{BASE_URL}/track/search", params=params, headers=headers, skip_cache=True
-        )
+        track_data = make_call(f"{BASE_URL}/track/search", params=params, headers=headers, skip_cache=True)
         for track in track_data["tracks"]["items"]:
             if track:
                 search_results.append(
@@ -199,16 +195,12 @@ def qobuz_get_search_results(token, search_term, content_types):
                         "item_type": "track",
                         "item_service": "qobuz",
                         "item_url": f"https://play.qobuz.com/track/{track['id']}",
-                        "item_thumbnail_url": track.get("album", {})
-                        .get("image", {})
-                        .get("small"),
+                        "item_thumbnail_url": track.get("album", {}).get("image", {}).get("small"),
                     }
                 )
 
     if "album" in content_types:
-        album_data = make_call(
-            f"{BASE_URL}/album/search", params=params, headers=headers, skip_cache=True
-        )
+        album_data = make_call(f"{BASE_URL}/album/search", params=params, headers=headers, skip_cache=True)
         for album in album_data["albums"]["items"]:
             if album:
                 search_results.append(
@@ -224,9 +216,7 @@ def qobuz_get_search_results(token, search_term, content_types):
                 )
 
     if "artist" in content_types:
-        artist_data = make_call(
-            f"{BASE_URL}/artist/search", params=params, headers=headers, skip_cache=True
-        )
+        artist_data = make_call(f"{BASE_URL}/artist/search", params=params, headers=headers, skip_cache=True)
         for artist in artist_data["artists"]["items"]:
             if artist:
                 search_results.append(
@@ -269,15 +259,13 @@ def qobuz_get_search_results(token, search_term, content_types):
     return search_results
 
 
-def qobuz_get_track_metadata(token, item_id):
+def qobuz_get_track_metadata(token, item_id, item):
     headers = {}
     headers["X-User-Auth-Token"] = token["user_auth_token"]
     headers["X-App-Id"] = token["app_id"]
 
     try:
-        track_data = make_call(
-            f"{BASE_URL}/track/get?track_id={item_id}", headers=headers
-        )
+        track_data = make_call(f"{BASE_URL}/track/get?track_id={item_id}", headers=headers)
         album_data = make_call(
             f"{BASE_URL}/album/get?album_id={track_data.get('album', {}).get('id')}",
             headers=headers,
@@ -312,12 +300,8 @@ def qobuz_get_track_metadata(token, item_id):
     info["label"] = track_data.get("album", {}).get("label", {}).get("name")
     info["album_name"] = track_data.get("album", {}).get("title")
     info["total_tracks"] = track_data.get("album", {}).get("tracks_count")
-    info["genre"] = conv_list_format(
-        track_data.get("album", {}).get("genres_list", [])[-1].split("→")
-    )
-    info["release_year"] = (
-        track_data.get("album", {}).get("release_date_original").split("-")[0]
-    )
+    info["genre"] = conv_list_format(track_data.get("album", {}).get("genres_list", [])[-1].split("→"))
+    info["release_year"] = track_data.get("album", {}).get("release_date_original").split("-")[0]
     info["description"] = track_data.get("album", {}).get("description")
     info["total_discs"] = track_data.get("album", {}).get("media_count")
 
@@ -343,9 +327,7 @@ def qobuz_get_album_track_ids(token, album_id):
     params = {}
     params["limit"] = "500"
 
-    album_data = make_call(
-        f"{BASE_URL}/album/get?album_id={album_id}", headers=headers, params=params
-    )
+    album_data = make_call(f"{BASE_URL}/album/get?album_id={album_id}", headers=headers, params=params)
 
     item_ids = []
     for track in album_data.get("tracks", {}).get("items", []):
@@ -386,9 +368,7 @@ def qobuz_get_label_album_ids(token, label_id):
     params = {}
     params["extra"] = "albums"
     params["limit"] = "500"
-    album_data = make_call(
-        f"{BASE_URL}/label/get?label_id={label_id}", headers=headers, params=params
-    )
+    album_data = make_call(f"{BASE_URL}/label/get?label_id={label_id}", headers=headers, params=params)
 
     item_ids = []
     for album in album_data.get("albums", {}).get("items", []):
@@ -433,9 +413,7 @@ def qobuz_get_file_url(token, item_id):
         r_sig = f"trackgetFileUrlformat_id{quality}intent{intent}track_id{item_id}{unix_ts}{secret}"  # Replace with your secret
         # Qobuz's request-signing protocol mandates MD5; this is not used for
         # password storage or local integrity checks.
-        r_sig_hashed = hashlib.md5(
-            r_sig.encode("utf-8"), usedforsecurity=False
-        ).hexdigest()
+        r_sig_hashed = hashlib.md5(r_sig.encode("utf-8"), usedforsecurity=False).hexdigest()
 
         params = {}
         params["request_ts"] = unix_ts

@@ -1,23 +1,21 @@
-import os
 import asyncio
+import json
+import mimetypes
+import os
+import re
 import secrets
+import shutil
 import threading
 import time
-import json
 import uuid
-import re
-import shutil
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import quote
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
-from contextlib import asynccontextmanager
-import mimetypes
-
+from urllib.parse import quote
 
 import uvicorn
-from pydantic import BaseModel
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
@@ -28,6 +26,8 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
+from pydantic import TypeAdapter
+from pydantic_core import ValidationError
 
 # librespot currently ships protobuf files generated for the compatibility
 # runtime. Keep source launches aligned with Docker, which sets this variable
@@ -35,67 +35,26 @@ from fastapi.staticfiles import StaticFiles
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
 
-from .api.generic import generic_add_account
+from .accounts import FillAccountPool, get_account_token
 from .api.apple_music import apple_music_add_account
 from .api.bandcamp import bandcamp_add_account
-from .api.deezer import deezer_add_account
-from .api.qobuz import qobuz_add_account
-from .api.soundcloud import soundcloud_add_account
 from .api.crunchyroll import crunchyroll_add_account
+from .api.deezer import deezer_add_account
+from .api.generic import generic_add_account
+from .api.qobuz import qobuz_add_account
+from .api.registry import SERVICE_SEARCH_FUNCTIONS
+from .api.soundcloud import soundcloud_add_account
 from .api.spotify import (
-    MirrorSpotifyPlayback,
     add_spotify_zeroconf_login,
     spotify_connect_status,
     spotify_get_search_results,
     spotify_new_session,
-    start_spotify_connect_service,
-    stop_spotify_connect_service,
 )
 from .api.tidal import tidal_add_account_pt1, tidal_add_account_pt2
-from .api.registry import SERVICE_SEARCH_FUNCTIONS
-
-from .accounts import FillAccountPool, get_account_token
-from .parsingworker import ParsingWorker
-from .otsconfig import config
-from .parse_item import get_search_results
-from .runtimedata import (
-    get_logger,
-    pending,
-    download_queue,
-    download_queue_lock,
-    download_paused,
-    pending_lock,
-    parsing,
-    parsing_lock,
-    subscribe_websocket,
-    unsubscribe_websocket,
-    account_pool,
-    notification_hook,
-    progress_hook,
-    get_rate_limit_state,
-)
+from .api.youtube_music import youtube_music_add_account
+from .basemodels import *
+from .constants import _SEARCH_FILTER_TYPES, _SEARCH_SERVICE_FILTER_KEYS, ItemStatus
 from .downloader import DownloadWorker, RetryWorker
-from .constants import ItemStatus
-from .library import (
-    is_allowed_path,
-    missing_items,
-    remove_missing_items,
-    read_cover,
-    rename_file,
-    scan_library,
-    export_index,
-    import_index,
-    verify_file,
-    update_cover,
-    update_metadata,
-    write_m3u,
-)
-from .utils import format_local_id, open_item, retry_single_item
-from .statistics import clear_history, export_history, get_statistics, import_history
-from .updater import (
-    check_for_updates,
-)
-
 from .export_locations import (
     default_export_directory,
     playlist_backup_directory,
@@ -103,6 +62,33 @@ from .export_locations import (
     set_playlist_backup_directory,
     write_export_file,
 )
+from .library import (
+    export_index,
+    import_index,
+    verify_file,
+)
+from .otsconfig import config
+from .parse_item import search
+from .parsingworker import ParsingWorker
+from .runtimedata import (
+    account_pool,
+    download_paused,
+    download_queue,
+    download_queue_lock,
+    get_logger,
+    get_rate_limit_state,
+    notification_hook,
+    parsing,
+    pending,
+    progress_hook,
+    subscribe_websocket,
+    unsubscribe_websocket,
+)
+from .statistics import export_history, import_history
+from .updater import (
+    check_for_updates,
+)
+from .utils import open_item
 from .youtube_auth import (
     managed_youtube_cookie_path,
     store_youtube_cookie_file,
@@ -112,8 +98,7 @@ from .youtube_auth import (
 )
 from .playlist_automation import PlaylistAutomationError, playlist_automation
 
-
-log_level = int(os.environ.get("LOG_LEVEL", 20))
+log_level = os.environ.get("LOG_LEVEL", "INFO")
 logger = get_logger("gui")
 # ---------------------------------------------------------------------------
 # ONTHESPOT BOOTSTRAP
@@ -171,12 +156,8 @@ def add_tidal_account():
         verification_url,
         verification_url,
     )
-    notification_hook(
-        title="Continue Login - Go to the URL", url=f"https://{verification_url}"
-    )
-    login_worker = threading.Thread(
-        target=add_tidal_account_worker, args=(device_code,)
-    )
+    notification_hook(title="Continue Login - Go to the URL", url=f"https://{verification_url}")
+    login_worker = threading.Thread(target=add_tidal_account_worker, args=(device_code,))
     login_worker.daemon = True
     login_worker.start()
 
@@ -190,48 +171,14 @@ def add_tidal_account_worker(device_code):
     if tidal_add_account_pt2(device_code):
         config.set("active_account_number", len(account_pool))
         config.save()
+        logger.info("Tidal Worker Authorized. Account Added.")
         fillaccountpool.stop()
         time.sleep(1)
         relogin()
-        notification_hook("Login Complete", "Refresh the page")
+        notification_hook("Tidal Login Complete", "Refresh the page")
     else:
-        logger.info("Account Already Exists")
-
-
-def search(search_term, search_filters: dict | None = None) -> None:
-    """
-    Parse the url and add the item to the pending queue.
-    """
-
-    results = get_search_results(search_term)
-    return results
-
-
-_SEARCH_FILTER_TYPES = {
-    "tracks": ("track",),
-    "albums": ("album",),
-    "playlists": ("playlist",),
-    "artists": ("artist",),
-    "podcasts": ("show", "episode"),
-    "movies": ("movie", "show", "episode"),
-}
-
-# Search categories are user-facing concepts, while each provider accepts a
-# different set of API types.  Keep the mapping provider-specific so enabling
-# Movies cannot send Spotify an unsupported ``movie`` type (which causes the
-# whole Spotify search request to fail), and so audio providers are not asked
-# for Crunchyroll video results.
-_SEARCH_SERVICE_FILTER_KEYS = {
-    "apple_music": {"tracks", "albums", "playlists", "artists"},
-    "bandcamp": {"tracks", "albums", "artists"},
-    "crunchyroll": {"movies"},
-    "deezer": {"tracks", "albums", "playlists", "artists"},
-    "qobuz": {"tracks", "albums", "playlists", "artists"},
-    "soundcloud": {"tracks", "albums", "playlists", "artists"},
-    "spotify": {"tracks", "albums", "playlists", "artists", "podcasts"},
-    "tidal": {"tracks", "albums", "playlists", "artists"},
-    "youtube_music": {"tracks"},
-}
+        logger.error("Error Adding Account or Account already exists")
+        notification_hook("Login Error", "Check the logs")
 
 
 def search_service_catalogs(
@@ -253,19 +200,13 @@ def search_service_catalogs(
     if selected_services is None and isinstance(filters.get("services"), list):
         selected_services = [str(value) for value in filters["services"]]
     allowed_services = (
-        {
-            service
-            for service in selected_services
-            if service in SERVICE_SEARCH_FUNCTIONS
-        }
+        {service for service in selected_services if service in SERVICE_SEARCH_FUNCTIONS}
         if selected_services is not None
         else None
     )
     if allowed_services == set():
         return []
-    selected_filter_keys = {
-        key for key in _SEARCH_FILTER_TYPES if filters.get(key, True)
-    }
+    selected_filter_keys = {key for key in _SEARCH_FILTER_TYPES if filters.get(key, True)}
     if not selected_filter_keys:
         return []
 
@@ -322,9 +263,7 @@ def search_service_catalogs(
     if not jobs:
         return []
     worker_count = min(4, len(jobs))
-    with ThreadPoolExecutor(
-        max_workers=worker_count, thread_name_prefix="ots-search"
-    ) as executor:
+    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="ots-search") as executor:
         provider_results = list(executor.map(run_provider, jobs))
 
     # Keep each provider's own relevance ordering, but interleave provider
@@ -354,14 +293,10 @@ def search_service_catalogs(
                     "item_id": item_id,
                     "item_service": str(item.get("item_service") or service),
                     "item_type": item_type,
-                    "name": str(
-                        item.get("item_name") or item.get("name") or "Untitled"
-                    ),
+                    "name": str(item.get("item_name") or item.get("name") or "Untitled"),
                     "artist": str(item.get("item_by") or item.get("artist") or ""),
                     "album": str(item.get("item_album") or item.get("album") or ""),
-                    "thumbnail": str(
-                        item.get("item_thumbnail_url") or item.get("thumbnail") or ""
-                    ),
+                    "thumbnail": str(item.get("item_thumbnail_url") or item.get("thumbnail") or ""),
                     "url": item_url,
                     "item_url": item_url,
                 }
@@ -396,8 +331,6 @@ def relogin():
 # ---------------------------------------------------------------------------
 # FASTAPI INIT
 # ---------------------------------------------------------------------------
-
-
 # START ONTHESPOT WORKERS HERE
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -449,9 +382,7 @@ cors_origins = [
     "http://127.0.0.1:3003",
 ]
 cors_origins.extend(
-    origin.strip()
-    for origin in os.environ.get("ONTHESPOT_CORS_ORIGINS", "").split(",")
-    if origin.strip()
+    origin.strip() for origin in os.environ.get("ONTHESPOT_CORS_ORIGINS", "").split(",") if origin.strip()
 )
 cors_origins = list(dict.fromkeys(cors_origins))
 
@@ -466,105 +397,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# Enabled Self-serving static frontend files from FastAPI. This could work for single binary deployment
-# but we need to implement better path handling and a separate composer file
-# app.frontend("/", directory="dist")
 
 
-# Pydantic schemas of body data
-class AccountData(BaseModel):
-    username: str | None = None
-    token: str | None = None
-
-
-class SpotifyCompanionLogin(BaseModel):
-    pairing_token: str
-    login: dict[str, Any]
-
-
-class YouTubeAuthentication(BaseModel):
-    mode: str = "none"
-    browser: str | None = None
-    cookie_file: str | None = None
-
-
-class QueueOrder(BaseModel):
-    local_ids: list[str]
-
-
-class QueueBatch(BaseModel):
-    local_ids: list[str]
-    action: str
-    priority: int | None = None
-    profile_id: str | None = None
-
-
-class QueueVerify(BaseModel):
-    local_ids: list[str] = []
-    retry: bool = True
-
-
-class DownloadProfile(BaseModel):
-    id: str
-    name: str
-    format: str = "mp3"
-    bitrate: str = "320k"
-    download_path: str = ""
-
-
-class ActiveProfile(BaseModel):
-    profile_id: str
-
-
-class LibraryPath(BaseModel):
-    path: str
-
-
-class LibraryPaths(BaseModel):
-    paths: list[str] = []
-
-
-class LibraryVerify(BaseModel):
-    paths: list[str] = []
-
-
-class LibraryRename(BaseModel):
-    path: str
-    new_name: str
-
-
-class LibraryMetadata(BaseModel):
-    path: str
-    title: str | None = None
-    artist: str | None = None
-    album: str | None = None
-    album_artist: str | None = None
-    genre: str | None = None
-    year: str | int | None = None
-    release_date: str | None = None
-    track_number: str | int | None = None
-    disc_number: str | int | None = None
-    lyrics: str | None = None
-
-
-class LibraryM3U(BaseModel):
-    name: str
-    paths: list[str]
-
-
-class LibraryOpen(BaseModel):
-    path: str
-    action: str = "folder"
-
-
-# ---------------------------------------------------------------------------
-# API ENDPOINTS
-# ---------------------------------------------------------------------------
-
-
-##QUERY ENDPOINTS
-
-
+##PROFILES ENDPOINTS
 @app.get("/profiles")
 async def get_download_profiles():
     return {
@@ -584,10 +419,8 @@ async def save_download_profile(profile: DownloadProfile):
     value["format"] = profile.format.lstrip(".").lower()
     if value["format"] not in {"mp3", "flac", "m4a", "opus", "ogg", "wav"}:
         return {"success": False, "error": "Unsupported audio format"}
-    value["bitrate"] = str(profile.bitrate or "320k")
-    value["download_path"] = (
-        os.path.abspath(profile.download_path) if profile.download_path else ""
-    )
+    value["bitrate"] = int(profile.bitrate or 320)
+    value["download_path"] = os.path.abspath(profile.download_path) if profile.download_path else ""
     profiles = [entry for entry in profiles if entry.get("id") != clean_id]
     profiles.append(value)
     config.set("download_profiles", profiles)
@@ -609,11 +442,7 @@ async def set_active_download_profile(profile: ActiveProfile):
 
 @app.delete("/profiles/{profile_id}")
 async def delete_download_profile(profile_id: str):
-    profiles = [
-        entry
-        for entry in (config.get("download_profiles", []) or [])
-        if entry.get("id") != profile_id
-    ]
+    profiles = [entry for entry in (config.get("download_profiles", []) or []) if entry.get("id") != profile_id]
     if not profiles:
         return {"success": False, "error": "At least one profile is required"}
     config.set("download_profiles", profiles)
@@ -623,258 +452,19 @@ async def delete_download_profile(profile_id: str):
     return {"success": True}
 
 
-## LOCAL LIBRARY ENDPOINTS
-@app.get("/library")
-async def get_library(
-    q: str = "",
-    sort: str = "artist",
-    sort_descending: bool = False,
-    duplicates_only: bool = False,
-    missing_artwork: bool = False,
-    failed_metadata: bool = False,
-    file_format: str = "",
-    artist: str = "",
-    genre: str = "",
-    date_from: int = 0,
-    date_to: int = 0,
-):
-    return scan_library(
-        q,
-        sort,
-        sort_descending,
-        duplicates_only,
-        missing_artwork,
-        failed_metadata,
-        file_format,
-        artist,
-        genre,
-        date_from,
-        date_to,
-    )
-
-
-@app.post("/library/scan")
-async def scan_local_library(
-    q: str = "",
-    sort: str = "artist",
-    sort_descending: bool = False,
-    duplicates_only: bool = False,
-    missing_artwork: bool = False,
-    failed_metadata: bool = False,
-    file_format: str = "",
-    artist: str = "",
-    genre: str = "",
-    date_from: int = 0,
-    date_to: int = 0,
-):
-    return scan_library(
-        q,
-        sort,
-        sort_descending,
-        duplicates_only,
-        missing_artwork,
-        failed_metadata,
-        file_format,
-        artist,
-        genre,
-        date_from,
-        date_to,
-    )
-
-
-@app.get("/library/missing")
-async def get_missing_library_items(q: str = ""):
-    return {"items": missing_items(q)}
-
-
-@app.post("/library/verify")
-async def verify_library_files(request: LibraryVerify):
-    targets = request.paths
-    if not targets:
-        snapshot = scan_library()
-        targets = [item.get("path", "") for item in snapshot.get("items", [])]
-    results = []
-    for path in targets:
-        try:
-            results.append(verify_file(path))
-        except ValueError as exc:
-            results.append(
-                {"path": path, "valid": False, "reason": str(exc), "size": 0}
-            )
-    corrupt = [item for item in results if not item.get("valid")]
-    return {
-        "checked": len(results),
-        "healthy": len(results) - len(corrupt),
-        "corrupt": len(corrupt),
-        "items": results,
-    }
-
-
-@app.get("/library/file")
-async def get_library_file(path: str):
-    if not is_allowed_path(path):
-        raise HTTPException(status_code=404, detail="Library file not found")
-    media_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
-    return FileResponse(path, media_type=media_type, filename=os.path.basename(path))
-
-
-@app.post("/library/open")
-async def open_library_item(request: LibraryOpen):
-    if not is_allowed_path(request.path):
-        raise HTTPException(status_code=404, detail="Library file not found")
-    try:
-        if request.action == "play":
-            open_item(request.path)
-        else:
-            open_item(os.path.dirname(os.path.abspath(request.path)))
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return {"success": True}
-
-
-@app.post("/library/rename")
-async def rename_library_item(request: LibraryRename):
-    try:
-        return {"success": True, "item": rename_file(request.path, request.new_name)}
-    except FileExistsError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.post("/library/metadata")
-async def update_library_metadata(request: LibraryMetadata):
-    try:
-        changes = request.model_dump(exclude={"path"}, exclude_none=True)
-        return {"success": True, "item": update_metadata(request.path, changes)}
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.post("/library/cover")
-async def update_library_cover(path: str = Form(...), cover: UploadFile = File(...)):
-    try:
-        data = await cover.read()
-        return {"success": True, "item": update_cover(path, data)}
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.get("/library/cover")
-async def get_library_cover(path: str):
-    try:
-        data, mime = read_cover(path)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except OSError as exc:
-        raise HTTPException(status_code=404, detail="Cover art is unavailable") from exc
-    return Response(
-        content=data, media_type=mime, headers={"Cache-Control": "public, max-age=3600"}
-    )
-
-
-@app.post("/library/m3u")
-async def create_library_m3u(request: LibraryM3U):
-    try:
-        path = write_m3u(request.name, request.paths)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return {"success": True, "path": path}
-
-
-@app.post("/library/requeue")
-async def requeue_missing_library_item(request: LibraryPath):
-    target = os.path.normcase(os.path.abspath(os.path.expanduser(request.path)))
-    record = next(
-        (
-            item
-            for item in missing_items()
-            if os.path.normcase(os.path.abspath(item.get("path", ""))) == target
-        ),
-        None,
-    )
-    if record is None:
-        raise HTTPException(
-            status_code=404, detail="No missing indexed download matches that file"
-        )
-    source_url = record.get("source_url")
-    if not source_url:
-        raise HTTPException(
-            status_code=400,
-            detail="This library entry has no source URL to re-download",
-        )
-
-    local_id = format_local_id(record.get("source_id") or source_url)
-    item = {
-        "local_id": local_id,
-        "item_url": source_url,
-        "item_service": record.get("source_service", "generic"),
-        "item_type": record.get("source_type", "track"),
-        "item_id": record.get("source_id") or source_url,
-        "parent_category": "library",
-        "available": True,
-        "item_status": ItemStatus.WAITING,
-        "name": record.get("title", ""),
-        "artist": record.get("artist", ""),
-        "album": record.get("album", ""),
-        "playlist_name": record.get("playlist_name", ""),
-        "playlist_by": record.get("playlist_by", ""),
-        "playlist_number": record.get("playlist_number", ""),
-        "queue_position": 0,
-        "priority": 0,
-    }
-    with download_queue_lock:
-        item["queue_position"] = (
-            max(
-                [entry.get("queue_position", -1) for entry in download_queue.values()],
-                default=-1,
-            )
-            + 1
-        )
-        download_queue[local_id] = item
-    pending.put_nowait(item)
-    notification_hook(
-        "Added missing file", f"Queued {item['name'] or source_url} for re-download."
-    )
-    return {"success": True, "local_id": local_id, "item": item}
-
-
-@app.delete("/library/missing")
-async def remove_missing_library_items(request: LibraryPaths):
-    removed = remove_missing_items(request.paths)
-    if request.paths and not removed:
-        raise HTTPException(
-            status_code=404,
-            detail="No missing indexed downloads match the selected entries",
-        )
-    if removed:
-        notification_hook(
-            "Library entries removed",
-            f"Removed {removed} missing file entr{'y' if removed == 1 else 'ies'} from the library index.",
-        )
-    return {"success": True, "removed": removed}
-
-
+##SEARCH ENDPOINT
 @app.post("/query/url")
 async def query_url(q: str | None = None, filters: dict | None = None):
     """
     Endpoint to perform a URL-based search.
 
-    :param q: The search term.
-    :param filters: Optional dictionary of filters for the search.
-    :return: Search results.
+    :param q: The search url.
+    :param filters: Optional dictionary of filters for the search !! Not Implemented Yet.
+    :return: True or False depending on the result of the search function.
     """
     result = None
     if q:
-        result = search(q, filters)
+        result = search(q)
     return result
 
 
@@ -890,9 +480,7 @@ async def search_spotify_catalog(q: str, types: str = "track"):
     """Search the Spotify public catalogue for the browse view."""
     raise NotImplementedError
     content_types = [
-        value
-        for value in types.split(",")
-        if value in {"track", "album", "artist", "playlist", "show", "episode"}
+        value for value in types.split(",") if value in {"track", "album", "artist", "playlist", "show", "episode"}
     ]
     if not content_types:
         content_types = ["track"]
@@ -988,141 +576,85 @@ async def query_download_queue():
         return (position, -priority, numeric_id)
 
     with download_queue_lock:
-        return dict(sorted(download_queue.items(), key=sort_key))
+        return download_queue.items()
 
 
 @app.get("/queue/downloads/state")
 async def query_download_state():
     with download_queue_lock:
         active = [
-            item
-            for item in download_queue.values()
-            if item.get("item_status") in (ItemStatus.DOWNLOADING, ItemStatus.PAUSED)
+            item for item in download_queue.values() if item.item_status in (ItemStatus.DOWNLOADING, ItemStatus.PAUSED)
         ]
         return {
             "paused": download_paused.is_set(),
             "active": len(active),
-            "speed": sum(
-                float(item.get("download_speed_bps", 0) or 0) for item in active
-            ),
-            "eta_seconds": max(
-                [item.get("eta_seconds") or 0 for item in active],
-                default=0,
-            ),
+            "speed": "nd",
+            "eta_seconds": "nd",
         }
-
-
-@app.post("/queue/downloads/reorder")
-async def reorder_download_queue(order: QueueOrder):
-    requested = [str(local_id) for local_id in order.local_ids]
-    with download_queue_lock:
-        for position, local_id in enumerate(requested):
-            if local_id in download_queue:
-                download_queue[local_id]["queue_position"] = position
-                download_queue[local_id]["priority"] = len(requested) - position
-
-    pending_items = pending.get_items()
-    pending_by_id = {str(item.get("local_id")): item for item in pending_items}
-    ordered_pending = [
-        pending_by_id[local_id] for local_id in requested if local_id in pending_by_id
-    ]
-    ordered_ids = {str(item.get("local_id")) for item in ordered_pending}
-    ordered_pending.extend(
-        item for item in pending_items if str(item.get("local_id")) not in ordered_ids
-    )
-    pending.replace_items(ordered_pending)
-    return {"success": True, "order": requested}
 
 
 @app.post("/queue/downloads/batch")
 async def batch_download_queue_action(batch: QueueBatch):
     """Apply one control to several queue items at once."""
     action = batch.action.strip().lower()
-    allowed = {"pause", "resume", "retry", "cancel", "delete", "priority", "profile"}
+    allowed = {"retry", "cancel", "delete", "profile"}
     if action not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported queue batch action")
     if action == "profile" and not batch.profile_id:
         raise HTTPException(status_code=400, detail="A profile is required")
     if action == "profile" and not any(
-        entry.get("id") == batch.profile_id
-        for entry in (config.get("download_profiles", []) or [])
+        entry.get("id") == batch.profile_id for entry in (config.get("download_profiles", []) or [])
     ):
         raise HTTPException(status_code=400, detail="Unknown download profile")
 
-    selected: list[dict] = []
-    retry_items: list[dict] = []
+    selected: list[QueueItem] = []
+    retry_items: list[QueueItem] = []
     changed = 0
     with download_queue_lock:
-        for local_id in {str(value) for value in batch.local_ids}:
-            item = download_queue.get(local_id)
-            if item is None:
-                continue
-            selected.append(item)
-            if action == "pause":
-                item["_pause_requested"] = True
-                item["item_status"] = ItemStatus.PAUSED
-            elif action == "resume":
-                item["_pause_requested"] = False
-                if not item.get("_active_download"):
-                    item["item_status"] = ItemStatus.WAITING
-            elif action == "cancel":
-                item["_pause_requested"] = False
-                item["_manual_cancelled"] = True
-                item["available"] = False
-                item["item_status"] = ItemStatus.CANCELLED
-                item["error"] = "Cancelled by the user."
-            elif action == "delete":
-                if item.get("_active_download"):
-                    item["_pause_requested"] = False
-                    item["_manual_cancelled"] = True
-                    item["_discarded"] = True
-                    item["available"] = False
-                    item["item_status"] = ItemStatus.CANCELLED
-                    item["error"] = "Deleted by the user."
-                else:
-                    item["_discarded"] = True
-                    download_queue.pop(local_id, None)
-            elif action == "retry":
-                retry_items.append(item)
-            elif action == "priority":
-                item["priority"] = int(batch.priority or 0)
-            elif action == "profile":
-                profile = next(
-                    entry
-                    for entry in (config.get("download_profiles", []) or [])
-                    if entry.get("id") == batch.profile_id
-                )
-                item["profile_id"] = profile.get("id")
-                item["profile_name"] = profile.get("name", profile.get("id", "Default"))
-            changed += 1
+        temp_queue = download_queue.copy()
+        try:
+            for item in temp_queue.values():
+                if item.local_id in batch.local_ids:
+                    local_id = item.local_id
+                    if item is None:
+                        continue
+                    selected.append(item)
+                    if action == "cancel":
+                        item.item_status = ItemStatus.CANCELLED
+                        item.error = "Cancelled by the user."
+                    elif action == "delete":
+                        if item.item_status == ItemStatus.DOWNLOADING:
+                            item.item_status = ItemStatus.CANCELLED
+                            item.error = "Deleted by the user."
+                        else:
+                            download_queue.pop(local_id, None)
+                    elif action == "retry":
+                        retry_items.append(item)
+                    elif action == "profile":
+                        profile = next(
+                            entry
+                            for entry in (config.get("download_profiles", []) or [])
+                            if entry.get("id") == batch.profile_id
+                        )
+                        item.download_profile.id = profile.get("id")
+                        item.download_profile.name = profile.get("name", profile.get("id", "Default"))
+                    changed += 1
 
-        if action == "priority":
-            waiting = sorted(
-                (
-                    item
-                    for item in download_queue.values()
-                    if item.get("item_status") == ItemStatus.WAITING
-                ),
-                key=lambda item: (
-                    -int(item.get("priority", 0) or 0),
-                    int(item.get("queue_position", 10**9) or 10**9),
-                ),
-            )
-            for position, item in enumerate(waiting):
-                item["queue_position"] = position
-
-    for item in retry_items:
-        retry_single_item(item)
+            for item in retry_items:
+                retry_item = item
+                retry_item.item_status = ItemStatus.WAITING
+                retry_item.error = ""
+                retry_item.retry_count = 0
+                download_queue.pop(retry_item.local_id, None)
+                pending.put_nowait(retry_item)
+        except Exception:
+            logger.exception("Exception durint batch action:")
     for item in selected:
         if action in {"pause", "resume", "cancel"}:
-            progress_hook(
-                item, int(item.get("progress", 0) or 0), item.get("item_status")
-            )
+            progress_hook(item, item.progress, item.item_status)
 
     if action == "resume" and selected:
-        notification_hook(
-            "Downloads resumed", f"Resumed {len(selected)} selected item(s)."
-        )
+        notification_hook("Downloads resumed", f"Resumed {len(selected)} selected item(s).")
     return {"success": True, "changed": changed, "action": action}
 
 
@@ -1133,60 +665,38 @@ async def verify_download_queue(request: QueueVerify):
         candidates = [
             item
             for item in download_queue.values()
-            if item.get("item_status")
-            in (ItemStatus.DOWNLOADED, ItemStatus.ALREADY_EXISTS)
-            and (not request.local_ids or item.get("local_id") in request.local_ids)
+            if item.item_status in (ItemStatus.DOWNLOADED, ItemStatus.ALREADY_EXISTS)
+            and (not request.local_ids or item.local_id in request.local_ids)
         ]
 
-    corrupt: list[dict] = []
+    corrupt: list[QueueItem] = []
     for item in candidates:
-        path = item.get("file_path") or ""
+        path = item.file_path or ""
         try:
             result = verify_file(path)
         except ValueError as exc:
             result = {"path": path, "valid": False, "reason": str(exc), "size": 0}
         if not result.get("valid"):
-            item["item_status"] = ItemStatus.FAILED
-            item["progress"] = 0
-            item["error"] = (
-                f"Verification failed: {result.get('reason', 'invalid file')}"
-            )
-            item["_stats_recorded"] = False
+            item.item_status = ItemStatus.FAILED
+            item.progress = 0
+            item.error = f"Verification failed: {result.get('reason', 'invalid file')}"
             corrupt.append(item)
 
     if request.retry:
         for item in corrupt:
-            retry_single_item(item)
+            retry_item = item
+            retry_item.item_status = ItemStatus.WAITING
+            retry_item.error = ""
+            retry_item.retry_count = 0
+            download_queue.pop(retry_item.local_id, None)
+            pending.put_nowait(retry_item)
     return {
         "checked": len(candidates),
         "healthy": len(candidates) - len(corrupt),
         "corrupt": len(corrupt),
         "retried": len(corrupt) if request.retry else 0,
-        "items": [
-            {"local_id": item.get("local_id"), "error": item.get("error", "")}
-            for item in corrupt
-        ],
+        "items": [{"local_id": item.local_id, "error": item.error} for item in corrupt],
     }
-
-
-@app.post("/queue/pending/action")
-async def pending_action(lid: str, action: str):
-    """
-    Endpoint to perform actions on a specific item in the pending queue.
-
-    :param lid: Local ID of the item.
-    :param action: Action to perform (e.g., retry, cancel, delete).
-    :return: Boolean indicating success or failure of the action.
-    """
-
-    for item in pending.get_items():
-        if item["local_id"] == lid:
-            match action:
-                case "cancel":
-                    pending.remove(item)
-                    return True
-                case _:
-                    return False
 
 
 @app.get("/queue/downloads/clear")
@@ -1213,13 +723,33 @@ async def remove_queue_items(status: str = "Completed"):
         keys_to_remove = [
             key
             for key, item in download_queue.items()
-            if item["item_status"] == status
-            or (completed_status and item["item_status"] == "Already Exists")
-            or (failed_status and item["item_status"] in failure_values)
+            if item.item_status == status
+            or (completed_status and item.item_status == ItemStatus.ALREADY_EXISTS)
+            or (failed_status and item.item_status in failure_values)
         ]
         for key in keys_to_remove:
             download_queue.pop(key, None)
         return len(keys_to_remove)
+
+
+@app.post("/queue/pending/action")
+async def pending_action(lid: str, action: str):
+    """
+    Endpoint to perform actions on a specific item in the pending queue.
+
+    :param lid: Local ID of the item.
+    :param action: Action to perform (e.g., retry, cancel, delete).
+    :return: Boolean indicating success or failure of the action.
+    """
+
+    for item in pending.get_items():
+        if isinstance(item, QueueItem) and item.local_id == int(lid):
+            match action:
+                case "cancel":
+                    pending.remove(item)
+                    return True
+                case _:
+                    return False
 
 
 @app.post("/queue/downloads/action")
@@ -1238,48 +768,38 @@ async def queue_action(lid: str, action: str):
     result_status = None
     with download_queue_lock:
         for key, item in download_queue.items():
-            if item["local_id"] == lid:
+            if item.local_id == int(lid):
                 match action:
                     case "retry":
                         # need to retry later to free the lock
                         retry_item = item
                     case "cancel":
-                        item["_pause_requested"] = False
-                        item["_manual_cancelled"] = True
-                        item["available"] = False
-                        item["item_status"] = ItemStatus.CANCELLED
-                        item["error"] = "Cancelled by the user."
+                        item.item_status = ItemStatus.CANCELLED
+                        item.error = "Cancelled by the user."
                         changed_item = item
                         notification = (
                             "Download cancelled",
-                            item.get("name", "The current track"),
+                            item.item_id,
                         )
                         result_status = ItemStatus.CANCELLED
                     case "delete":
-                        if item.get("_active_download"):
-                            item["_pause_requested"] = False
-                            item["_manual_cancelled"] = True
-                            item["_discarded"] = True
-                            item["available"] = False
-                            item["item_status"] = ItemStatus.CANCELLED
-                            item["error"] = "Deleted by the user."
+                        if item.item_status == ItemStatus.DOWNLOADING:
+                            item.item_status = ItemStatus.CANCELLED
+                            item.error = "Deleted by the user."
                             changed_item = item
                             notification = (
                                 "Download removed",
-                                item.get("name", "The current track"),
+                                item.item_id,
                             )
                             result_status = ItemStatus.CANCELLED
                         else:
-                            item["_discarded"] = True
                             download_queue.pop(key)
                             result_status = ItemStatus.DELETED
                     case _:
                         return {"success": False, "error": "Unknown queue action."}
                 break
     if changed_item is not None:
-        raw_progress = changed_item.get(
-            "progress", changed_item.get("item_progress", 0)
-        )
+        raw_progress = changed_item.progress
         try:
             current_progress = int(float(raw_progress or 0))
         except (TypeError, ValueError):
@@ -1291,7 +811,11 @@ async def queue_action(lid: str, action: str):
             notification_hook(*notification)
         return {"success": True, "action": action, "status": result_status}
     if retry_item is not None:
-        retry_single_item(retry_item)
+        retry_item.item_status = ItemStatus.WAITING
+        retry_item.error = ""
+        retry_item.retry_count = 0
+        download_queue.pop(retry_item.local_id, None)
+        pending.put_nowait(retry_item)
         return {"success": True, "action": action, "status": ItemStatus.WAITING}
     if result_status == ItemStatus.DELETED:
         return {"success": True, "action": action, "status": result_status}
@@ -1306,27 +830,14 @@ async def retry_failed_items():
     retryable_statuses = {
         ItemStatus.CANCELLED,
         ItemStatus.FAILED,
-        ItemStatus.UNAVAILABLE,
     }
     with download_queue_lock:
-        found_items = [
-            item
-            for item in download_queue.values()
-            if (
-                item.get("item_status") in retryable_statuses
-                and (item.get("available", True) or item.get("_manual_cancelled"))
-                and not item.get("_discarded")
-            )
-        ]
+        found_items = [item for item in download_queue.values() if item.item_status in retryable_statuses]
         for item in found_items:
-            item["available"] = True
-            item.pop("_manual_cancelled", None)
-            item["item_status"] = ItemStatus.WAITING
-            item["error"] = ""
-            item["_stats_recorded"] = False
-            item["queue_preloaded"] = None
-            item["retry_count"] = int(item.get("retry_count", 0) or 0) + 1
-            download_queue.pop(item["local_id"], None)
+            item.item_status = ItemStatus.WAITING
+            item.error = ""
+            item.retry_count = item.retry_count + 1
+            download_queue.pop(item.local_id, None)
 
     for item in found_items:
         pending.put_nowait(item)
@@ -1343,9 +854,9 @@ async def download_file(lid):
     """
     file_path = None
     with download_queue_lock:
-        item = download_queue.get(str(lid))
-        if item is not None:
-            file_path = item.get("file_path")
+        for item in download_queue.values():
+            if item.local_id == int(lid) and item.file_path != "":
+                file_path = item.file_path
     if not file_path or not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Downloaded file not found")
     file_name = os.path.basename(file_path)
@@ -1360,8 +871,7 @@ async def query_pending_queue():
 
     :return: Public snapshot of items waiting to enter the download queue.
     """
-    with pending_lock:
-        items = [_public_queue_item(item) for item in pending.get_items()]
+    items = [item for item in pending.get_items()]
     return {"items": items, "count": len(items)}
 
 
@@ -1372,8 +882,8 @@ async def query_parsing_queue():
 
     :return: Public snapshot of items currently being parsed.
     """
-    with parsing_lock:
-        items = [_public_queue_item(item) for item in parsing.values()]
+
+    items = [_public_queue_item(item) for item in parsing.get_items()]
     return {"items": items, "count": len(items)}
 
 
@@ -1388,24 +898,34 @@ async def get_config():
     return config.as_dict()
 
 
-@app.post("/config/set")
-async def set_config(nkey, nvalue):
-    """
-    Endpoint to set a configuration setting.
+@app.patch("/config/set", status_code=status.HTTP_200_OK)
+async def update_partial_config(patch_data: dict):
+    model_fields = AppSettings.model_fields
+    result = None
 
-    :param nkey: Key of the configuration setting.
-    :param nvalue: Value for the configuration setting.
-    :return: Updated configuration setting.
-    """
-    if nvalue in ["false", "true"]:
-        match nvalue:
-            case "false":
-                nvalue = False
-            case "true":
-                nvalue = True
-            case _:
-                pass
-    result = config.set(nkey, nvalue)
+    for key, value in patch_data.items():
+        # 1. Verify the key exists in AppSettings
+        if key not in model_fields:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Field '{key}' is not a valid setting.",
+            )
+
+        # 2. Get the field's declared type and validate the value against it
+        field_info = model_fields[key]
+        adapter = TypeAdapter(field_info.annotation)
+
+        try:
+            # Validates type, handles lists/dicts/optionals, and coerces if needed
+            validated_value = adapter.validate_python(value)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Invalid value for field '{key}': {exc.errors()}",
+            )
+
+        # 3. Store the validated value
+        result = config.set(key, validated_value)
 
     return result
 
@@ -1428,11 +948,7 @@ async def get_export_location():
 @app.post("/exports/location")
 async def update_export_location(payload: dict[str, Any]):
     try:
-        return {
-            "directory": set_default_export_directory(
-                str(payload.get("directory") or "")
-            )
-        }
+        return {"directory": set_default_export_directory(str(payload.get("directory") or ""))}
     except OSError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1456,18 +972,12 @@ async def update_playlist_backup_location(payload: dict[str, Any]):
 
 @app.post("/exports/write")
 async def write_text_export(payload: dict[str, Any]):
-    raise NotImplementedError
-
-    filename = (
-        re.sub(
-            r"[^A-Za-z0-9._-]+", "-", str(payload.get("filename") or "export.txt")
-        ).strip(".-")
-        or "export.txt"
-    )
+    filename = Path(str(payload.get("filename") or "export.txt")).name
     stem, extension = os.path.splitext(filename)
+    safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip(".-") or "export"
     try:
         path = write_export_file(
-            stem or "export",
+            safe_stem,
             extension or ".txt",
             str(payload.get("content") or ""),
             str(payload.get("directory") or ""),
@@ -1479,13 +989,13 @@ async def write_text_export(payload: dict[str, Any]):
 
 @app.post("/exports/open-folder")
 async def open_export_folder(payload: dict[str, Any]):
+    directory = (
+        playlist_backup_directory()
+        if payload.get("playlist_backups")
+        else default_export_directory()
+    )
     try:
-        directory = (
-            playlist_backup_directory()
-            if payload.get("playlist_backups")
-            else default_export_directory()
-        )
-        os.makedirs(directory, exist_ok=True)
+        Path(directory).mkdir(parents=True, exist_ok=True)
         open_item(directory)
         return {"success": True, "path": directory}
     except OSError as exc:
@@ -1503,16 +1013,9 @@ async def reset_config():
     return config.as_dict()
 
 
-def _exportable_config() -> dict:
-    exported = config.as_dict()
-    if exported.get("spotify_webapi_override_client_secret_configured"):
-        exported["spotify_webapi_override_client_secret"] = "<redacted>"
-    return exported
-
-
 @app.get("/config/export")
 async def export_config():
-    return JSONResponse(content=_exportable_config())
+    return JSONResponse(content=config)
 
 
 @app.post("/config/export-file")
@@ -1532,10 +1035,10 @@ async def export_config_file(payload: dict[str, Any]):
 
 @app.post("/config/import")
 async def import_config(payload: dict):
+    raise NotImplementedError
+    ## Guard the imported entry using the AppSettings interface
     if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=400, detail="Configuration must be a JSON object"
-        )
+        raise HTTPException(status_code=400, detail="Configuration must be a JSON object")
     protected = {"_ffmpeg_bin_path", "_log_file", "_cache_dir"}
     for key, value in payload.items():
         if key in protected or key.startswith("_"):
@@ -1559,42 +1062,9 @@ def _safe_queue_snapshot() -> list[dict]:
     with download_queue_lock:
         snapshot = []
         for item in download_queue.values():
-            safe = {
-                key: value
-                for key, value in item.items()
-                if not key.startswith("_")
-                and key not in {"token", "credentials", "login"}
-            }
+            safe = {key: value for key, value in item.model_dump()}
             snapshot.append(safe)
         return snapshot
-
-
-@app.get("/statistics")
-async def download_statistics():
-    raise NotImplementedError
-    stats = get_statistics()
-    library_snapshot = scan_library()
-    with download_queue_lock:
-        queue_counts: dict[str, int] = {}
-        for item in download_queue.values():
-            status = str(
-                getattr(
-                    item.get("item_status", ""), "value", item.get("item_status", "")
-                )
-            )
-            queue_counts[status] = queue_counts.get(status, 0) + 1
-    return {
-        **stats,
-        "storage_used": int(library_snapshot.get("storage_used", 0) or 0),
-        "library_tracks": int(library_snapshot.get("count", 0) or 0),
-        "queue_counts": queue_counts,
-    }
-
-
-@app.post("/statistics/clear")
-async def clear_download_statistics():
-    clear_history()
-    return {"success": True}
 
 
 # ---------------------------------------------------------------------------
@@ -1889,11 +1359,10 @@ async def export_backup():
         content={
             "version": 1,
             "created_at": int(time.time()),
-            "settings": _exportable_config(),
+            "settings": config,
             "download_profiles": config.get("download_profiles", []) or [],
             "queue": _safe_queue_snapshot(),
             "queue_history": export_history(),
-            "library_metadata": export_index(),
         }
     )
 
@@ -1901,9 +1370,7 @@ async def export_backup():
 @app.post("/backup/export-file")
 async def export_backup_file(payload: dict[str, Any]):
     raise NotImplementedError
-    backup = (
-        payload.get("backup") if isinstance(payload.get("backup"), dict) else payload
-    )
+    backup = payload.get("backup") if isinstance(payload.get("backup"), dict) else payload
     try:
         path = write_export_file(
             "onthespot-backup",
@@ -1921,11 +1388,7 @@ async def import_backup(payload: dict):
     raise NotImplementedError
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Backup must be a JSON object")
-    settings = (
-        payload.get("settings")
-        if isinstance(payload.get("settings"), dict)
-        else payload
-    )
+    settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else payload
     protected = {"_ffmpeg_bin_path", "_log_file", "_cache_dir"}
     for key, value in settings.items():
         if key in protected or str(key).startswith("_"):
@@ -1935,14 +1398,10 @@ async def import_backup(payload: dict):
         config.set(key, value)
     config.save()
     history_restored = (
-        import_history(payload.get("queue_history"))
-        if payload.get("queue_history") is not None
-        else False
+        import_history(payload.get("queue_history")) if payload.get("queue_history") is not None else False
     )
     library_restored = (
-        import_index(payload.get("library_metadata"))
-        if payload.get("library_metadata") is not None
-        else False
+        import_index(payload.get("library_metadata")) if payload.get("library_metadata") is not None else False
     )
     return {
         "success": True,
@@ -1985,9 +1444,7 @@ async def upload_youtube_auth(cookies: UploadFile):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:
-        raise HTTPException(
-            status_code=500, detail=f"Could not store the cookies file: {exc}"
-        ) from exc
+        raise HTTPException(status_code=500, detail=f"Could not store the cookies file: {exc}") from exc
 
     config.set("youtube_auth_mode", "cookie_file")
     config.set("youtube_cookies_browser", "")
@@ -2014,16 +1471,12 @@ async def configure_youtube_auth(authentication: YouTubeAuthentication):
     }
     mode = authentication.mode.strip().lower()
     if mode not in {"none", "browser", "cookie_file"}:
-        raise HTTPException(
-            status_code=400, detail="Unsupported YouTube authentication mode"
-        )
+        raise HTTPException(status_code=400, detail="Unsupported YouTube authentication mode")
 
     browser = (authentication.browser or "").strip().lower()
     cookie_file = (authentication.cookie_file or "").strip()
     if mode == "browser" and browser not in allowed_browsers:
-        raise HTTPException(
-            status_code=400, detail="Choose a supported browser profile"
-        )
+        raise HTTPException(status_code=400, detail="Choose a supported browser profile")
     if mode == "browser":
         try:
             await run_in_threadpool(validate_youtube_browser, browser)
@@ -2041,18 +1494,14 @@ async def configure_youtube_auth(authentication: YouTubeAuthentication):
         try:
             managed_cookie_file.unlink(missing_ok=True)
         except OSError:
-            logger.warning(
-                "Could not remove managed YouTube cookies file: %s", managed_cookie_file
-            )
+            logger.warning("Could not remove managed YouTube cookies file: %s", managed_cookie_file)
 
     config.set("youtube_auth_mode", mode)
     config.set("youtube_cookies_browser", browser if mode == "browser" else "")
     config.set("youtube_cookies_file", cookie_file if mode == "cookie_file" else "")
     config.save()
     status = "disabled" if mode == "none" else "configured"
-    notification_hook(
-        "YouTube authentication updated", f"YouTube session authentication is {status}."
-    )
+    notification_hook("YouTube authentication updated", f"YouTube session authentication is {status}.")
     return {"success": True, **(await run_in_threadpool(youtube_auth_status))}
 
 
@@ -2066,43 +1515,44 @@ async def add_account(service: str, item: AccountData | None = None):
     :return: Boolean indicating success or failure of account addition.
     """
     found = False
-    match service:
-        case "generic":
-            generic_add_account()
-            found = True
-        case "spotify":
-            add_spotify_account()
-            # found = True
-        case "tidal":
-            add_tidal_account()
-            # found = True
-        case "applemusic":
-            apple_music_add_account(item.token)
-            found = True
-        case "youtube":
-            generic_add_account()
-            found = True
-        case "bandcamp":
-            bandcamp_add_account()
-            found = True
-        case "qobuz":
-            qobuz_add_account(item.username, item.token)
-            found = True
-        case "deezer":
-            deezer_add_account(item.token)
-            found = True
-        case "soundcloud":
-            soundcloud_add_account(oauth_token=item.token)
-            found = True
-        case "crunchyroll":
-            crunchyroll_add_account(item.username, item.token)
-            # found = True
-        case _:
-            raise NotImplementedError
-    if found:
-        await run_in_threadpool(relogin)
-    notification_hook(title="Logging in...")
-    return found
+    if item is not None:
+        match service:
+            case "generic":
+                generic_add_account()
+                found = True
+            case "spotify":
+                add_spotify_account()
+                # found = True
+            case "tidal":
+                add_tidal_account()
+                # found = True
+            case "applemusic":
+                apple_music_add_account(item.token)
+                found = True
+            case "youtube":
+                youtube_music_add_account()
+                found = True
+            case "bandcamp":
+                bandcamp_add_account()
+                found = True
+            case "qobuz":
+                qobuz_add_account(item.username, item.token)
+                found = True
+            case "deezer":
+                deezer_add_account(item.token)
+                found = True
+            case "soundcloud":
+                soundcloud_add_account(oauth_token=item.token)
+                found = True
+            case "crunchyroll":
+                crunchyroll_add_account(item.username, item.token)
+                # found = True
+            case _:
+                raise NotImplementedError
+        if found:
+            await run_in_threadpool(relogin)
+        notification_hook(title="Logging in...")
+        return found
 
 
 @app.post("/accounts/spotify/companion/pair")
@@ -2128,9 +1578,7 @@ async def complete_spotify_companion_pairing(payload: SpotifyCompanionLogin):
     with _spotify_companion_pairing_lock:
         expires_at = _spotify_companion_pairings.pop(token, None)
     if not expires_at or expires_at < time.time():
-        raise HTTPException(
-            status_code=401, detail="The companion pairing code is invalid or expired"
-        )
+        raise HTTPException(status_code=401, detail="The companion pairing code is invalid or expired")
 
     if not add_spotify_zeroconf_login(payload.login):
         raise HTTPException(
@@ -2206,16 +1654,10 @@ async def get_account_health():
         if isinstance(account, dict) and account.get("active", True)
     ]
     authenticated_services = {
-        account.get("service")
-        for account in account_pool
-        if isinstance(account, dict) and account.get("active", True)
+        account.get("service") for account in account_pool if isinstance(account, dict) and account.get("active", True)
     }
     configured_services = {account.get("service") for account in configured}
-    missing_services = sorted(
-        service
-        for service in configured_services
-        if service not in authenticated_services
-    )
+    missing_services = sorted(service for service in configured_services if service not in authenticated_services)
     spotify_online = "spotify" in authenticated_services
     return {
         "healthy": bool(configured) and not missing_services,
@@ -2224,11 +1666,7 @@ async def get_account_health():
             "connected": spotify_online,
             "status": "Connected"
             if spotify_online
-            else (
-                "Not configured"
-                if "spotify" not in configured_services
-                else "Needs reconnect"
-            ),
+            else ("Not configured" if "spotify" not in configured_services else "Needs reconnect"),
             "connect_service": spotify_connect_status(),
         },
         "configured_accounts": len(configured),
@@ -2241,9 +1679,7 @@ async def get_account_health():
 @app.post("/accounts/reconnect")
 async def reconnect_accounts():
     await run_in_threadpool(relogin)
-    notification_hook(
-        "Reconnecting accounts", "The account pool is refreshing in the background."
-    )
+    notification_hook("Reconnecting accounts", "The account pool is refreshing in the background.")
     return {"success": True}
 
 
@@ -2257,7 +1693,7 @@ async def get_system_diagnostics():
     with download_queue_lock:
         status_counts: dict[str, int] = {}
         for item in download_queue.values():
-            status = str(item.get("item_status", "Unknown"))
+            status = str(item.item_status)
             status_counts[status] = status_counts.get(status, 0) + 1
     root = config.get("audio_download_path") or os.getcwd()
     try:
@@ -2266,10 +1702,7 @@ async def get_system_diagnostics():
     except OSError:
         disk = {"total": 0, "free": 0, "used": 0}
     rate_limit = get_rate_limit_state()
-    spotify_rate_limited = (
-        bool(rate_limit.get("active"))
-        and "spotify" in str(rate_limit.get("host") or "").casefold()
-    )
+    spotify_rate_limited = bool(rate_limit.get("active")) and "spotify" in str(rate_limit.get("host") or "").casefold()
     spotify_api_status = "Rate limited" if spotify_rate_limited else "ND"
     return {
         "backend": {"status": "online", "version": config.get("version")},
@@ -2277,13 +1710,11 @@ async def get_system_diagnostics():
             "parsing": parsing_worker.thread.is_alive(),
             "downloads": downloadworker.thread.is_alive(),
             "accounts": bool(account_pool),
-            "retry": retryworker.thread.is_alive()
-            if config.get("enable_retry_worker")
-            else False,
+            "retry": retryworker.thread.is_alive() if config.get("enable_retry_worker") else False,
         },
         "queue": {
             "pending": pending.qsize(),
-            "parsing": len(parsing),
+            "parsing": parsing.qsize(),
             "downloads": len(download_queue),
             "statuses": status_counts,
             "paused": download_paused.is_set(),
@@ -2299,9 +1730,7 @@ async def get_system_diagnostics():
             "connected": False,
             "status": spotify_api_status,
             "rate_limited": spotify_rate_limited,
-            "seconds_remaining": int(rate_limit.get("seconds_remaining") or 0)
-            if spotify_rate_limited
-            else 0,
+            "seconds_remaining": int(rate_limit.get("seconds_remaining") or 0) if spotify_rate_limited else 0,
             "connect_service": [],
         },
     }
@@ -2320,12 +1749,11 @@ async def get_logs():
     data = []
     with open(log_path, "r") as f:
         lines = f.readlines()
-    for line in lines:
+    for line in lines[-100:]:
         main = re.findall(r"(\[*.+\])( -> *.+)", line)
         try:
             message = main[0][1]
-        except IndexError:
-            message = None
+        except Exception:
             data.append(
                 {
                     "id": uuid.uuid4(),
@@ -2341,13 +1769,12 @@ async def get_logs():
             date = log_info[0][0][:-4]
             source = log_info[0][2]
             level = log_info[0][3]
-            formatted_message = main if message is None else source + message
-
-        except IndexError:
+            formatted_message = source + message
+        except Exception:
             date = ""
             source = ""
             level = ""
-            formatted_message = main if message is None else message
+            formatted_message = message
         data.append(
             {
                 "id": uuid.uuid4(),
@@ -2367,7 +1794,7 @@ async def download_logs():
     :return: List of log entries.
     """
     log_path = config.get("_log_file")
-    directory, file_name = os.path.split(log_path)
+    _directory, file_name = os.path.split(log_path)
     return FileResponse(log_path, media_type="text/plain", filename=file_name)
 
 
@@ -2407,9 +1834,7 @@ async def sse_endpoint(user_id: str, request: Request):
 # The production UI is built by Vite into ui/dist and served by this same
 # FastAPI process. Set ONTHESPOT_WEBUI_DIST when the files live elsewhere.
 _workspace_root = Path(__file__).resolve().parents[3]
-_ui_dist = Path(
-    os.environ.get("ONTHESPOT_WEBUI_DIST") or _workspace_root / "ui" / "dist"
-)
+_ui_dist = Path(os.environ.get("ONTHESPOT_WEBUI_DIST") or _workspace_root / "ui" / "dist")
 if _ui_dist.is_dir():
     app.mount("/", StaticFiles(directory=str(_ui_dist), html=True), name="web-ui")
 

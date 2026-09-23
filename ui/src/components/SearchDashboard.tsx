@@ -1,516 +1,337 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { Badge } from "@astryxdesign/core/Badge";
+import { Button } from "@astryxdesign/core/Button";
+import { Card } from "@astryxdesign/core/Card";
+import { Divider } from "@astryxdesign/core/Divider";
+import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
+import { TextInput } from "@astryxdesign/core/TextInput";
 import {
-  Search,
+  AudioWaveform,
+  CheckCircle2,
+  Clock,
+  Disc3,
   Download,
-  ExternalLink,
-  Music,
-  Disc,
-  Tv,
-  Film,
-  Mic,
-  Filter,
-  Check,
-  Loader2,
-  Sparkles,
+  ListMusic,
   Music2,
-  Waves,
-  Cloud,
-  CirclePlay,
-  Heart,
-  Headphones,
+  Radio,
+  Search,
+  Sparkles,
 } from "lucide-react";
-import { AccountItem, SearchResultItem, OTSConfig } from "../types";
-import {
-  getAvailableCatalogServices,
-  getCatalogServiceLabel,
-} from "../lib/catalogServices";
+import React, { useState } from "react";
+import { CATALOG_SERVICES, getServiceInfo } from "../lib/catalogServices";
+import { SearchResultItem } from "../types";
+import { SectionHeader } from "./SectionHeader";
 
 interface SearchDashboardProps {
-  onSearch: (
-    q: string,
-    filters: Record<string, boolean>,
-    services?: string[],
-  ) => Promise<SearchResultItem[]>;
-  onDownload: (
-    q: string,
-    filters?: Record<string, boolean>,
-  ) => Promise<boolean>;
-  config: OTSConfig | null;
-  accounts: AccountItem[];
-  query: string;
-  onQueryChange: (query: string) => void;
+  onSearch: (query: string, filters: Record<string, boolean>, services: string[]) => Promise<SearchResultItem[]>;
+  onQueueItem: (item: SearchResultItem) => Promise<void>;
+  isSearching: boolean;
+  results: SearchResultItem[];
 }
 
 export const SearchDashboard: React.FC<SearchDashboardProps> = ({
   onSearch,
-  onDownload,
-  config,
-  accounts,
-  query,
-  onQueryChange,
+  onQueueItem,
+  isSearching,
+  results,
 }) => {
-  const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<SearchResultItem[]>([]);
-  const [enqueuedIds, setEnqueuedIds] = useState<Set<string>>(new Set());
-  const [filters, setFilters] = useState<Record<string, boolean>>({
-    tracks: config?.enable_search_tracks ?? true,
-    albums: config?.enable_search_albums ?? true,
-    playlists: config?.enable_search_playlists ?? true,
-    artists: config?.enable_search_artists ?? true,
-    podcasts: config?.enable_search_podcasts ?? true,
-    movies: true,
-  });
-  const availableServices = useMemo(
-    () => getAvailableCatalogServices(accounts),
-    [accounts],
-  );
-  const [selectedServiceOverride, setSelectedServiceOverride] = useState<
-    string[] | null
-  >(null);
-  const preferredServices = useMemo(
-    () =>
-      availableServices.includes("spotify")
-        ? ["spotify"]
-        : availableServices.slice(0, 1),
-    [availableServices],
-  );
-  const selectedServices = useMemo(
-    () =>
-      (selectedServiceOverride ?? preferredServices).filter((service) =>
-        availableServices.includes(service),
-      ),
-    [availableServices, preferredServices, selectedServiceOverride],
-  );
-  const resultServiceCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    results.forEach((item) => {
-      counts.set(item.item_service, (counts.get(item.item_service) ?? 0) + 1);
-    });
-    return Array.from(counts.entries()).sort(([left], [right]) =>
-      getCatalogServiceLabel(left).localeCompare(getCatalogServiceLabel(right)),
-    );
-  }, [results]);
+  const [query, setQuery] = useState("");
+  const [selectedType, setSelectedType] = useState<string>("all");
+  const [selectedServices, setSelectedServices] = useState<string[]>([]);
+  const [queuedIds, setQueuedIds] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    // Account workers briefly disappear while the backend reconnects. Keep the
-    // user's choices during that transient state, while deriving an empty
-    // effective selection above so Search remains safely disabled.
-    if (availableServices.length === 0) return;
-    setSelectedServiceOverride((current) =>
-      current === null
-        ? null
-        : current.filter((service) => availableServices.includes(service)),
-    );
-  }, [availableServices]);
-
-  const handleSearchSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!query.trim()) return;
-
-    setLoading(true);
-    try {
-      if (/^https?:\/\//i.test(query.trim())) {
-        await onDownload(query.trim(), filters);
-        return;
-      }
-      if (selectedServices.length === 0) return;
-      const data = await onSearch(query.trim(), filters, selectedServices);
-      setResults(data);
-    } catch (err) {
-      console.error("Search error", err);
-    } finally {
-      setLoading(false);
+  const handleSearchSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const filterMap: Record<string, boolean> = {};
+    if (selectedType !== "all") {
+      filterMap[selectedType] = true;
     }
+    onSearch(query, filterMap, selectedServices);
   };
 
-  const triggerDownload = async (item: SearchResultItem) => {
-    try {
-      await onDownload(item.item_url || item.url);
-      setEnqueuedIds((prev) => new Set(prev).add(item.id));
-    } catch (err) {
-      console.error("Download Error", err);
-      return;
+  const handleTypeChange = (typeVal: string) => {
+    setSelectedType(typeVal);
+    const filterMap: Record<string, boolean> = {};
+    if (typeVal !== "all") {
+      filterMap[typeVal] = true;
     }
+    onSearch(query, filterMap, selectedServices);
   };
 
-  const toggleFilter = (key: string) => {
-    setFilters((prev) => ({ ...prev, [key]: !prev[key] }));
-    setResults([]);
-  };
+  const toggleService = (serviceId: string) => {
+    const updated = selectedServices.includes(serviceId)
+      ? selectedServices.filter((s) => s !== serviceId)
+      : [...selectedServices, serviceId];
+    setSelectedServices(updated);
 
-  const toggleService = (service: string) => {
-    setResults([]);
-    setSelectedServiceOverride((current) => {
-      const selected = current ?? preferredServices;
-      return selected.includes(service)
-        ? selected.filter((value) => value !== service)
-        : [...selected, service];
-    });
-  };
-
-  const toggleAllServices = () => {
-    setResults([]);
-    setSelectedServiceOverride(
-      selectedServices.length === availableServices.length
-        ? preferredServices
-        : availableServices,
-    );
-  };
-
-  const getServiceBadge = (service: string) => {
-    const base =
-      "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold";
-    switch (service.toLowerCase()) {
-      case "spotify":
-        return (
-          <span
-            title="Downloads from Spotify"
-            className={`${base} border-green-500/30 bg-green-500/10 text-green-300`}
-          >
-            <Music2 className="h-3 w-3" />
-            Spotify
-          </span>
-        );
-      case "tidal":
-        return (
-          <span
-            title="Downloads from Tidal"
-            className={`${base} border-cyan-500/30 bg-cyan-500/10 text-cyan-300`}
-          >
-            <Waves className="h-3 w-3" />
-            Tidal
-          </span>
-        );
-      case "apple_music":
-      case "applemusic":
-        return (
-          <span
-            title="Downloads from Apple Music"
-            className={`${base} border-rose-500/30 bg-rose-500/10 text-rose-300`}
-          >
-            <Music2 className="h-3 w-3" />
-            Apple Music
-          </span>
-        );
-      case "soundcloud":
-        return (
-          <span
-            title="Downloads from SoundCloud"
-            className={`${base} border-orange-500/30 bg-orange-500/10 text-orange-300`}
-          >
-            <Cloud className="h-3 w-3" />
-            SoundCloud
-          </span>
-        );
-      case "bandcamp":
-        return (
-          <span
-            title="Downloads from Bandcamp"
-            className={`${base} border-sky-500/30 bg-sky-500/10 text-sky-300`}
-          >
-            <Disc className="h-3 w-3" />
-            Bandcamp
-          </span>
-        );
-      case "youtube_music":
-      case "youtube":
-        return (
-          <span
-            title="Downloads from YouTube Music"
-            className={`${base} border-red-500/30 bg-red-500/10 text-red-300`}
-          >
-            <CirclePlay className="h-3 w-3" />
-            YouTube Music
-          </span>
-        );
-      case "crunchyroll":
-        return (
-          <span
-            title="Downloads from Crunchyroll"
-            className={`${base} border-orange-500/30 bg-orange-500/10 text-orange-300`}
-          >
-            <Tv className="h-3 w-3" />
-            Crunchyroll
-          </span>
-        );
-      case "deezer":
-        return (
-          <span
-            title="Downloads from Deezer"
-            className={`${base} border-violet-500/30 bg-violet-500/10 text-violet-300`}
-          >
-            <Heart className="h-3 w-3" />
-            Deezer
-          </span>
-        );
-      case "qobuz":
-        return (
-          <span
-            title="Downloads from Qobuz"
-            className={`${base} border-sky-500/30 bg-sky-500/10 text-sky-300`}
-          >
-            <Headphones className="h-3 w-3" />
-            Qobuz
-          </span>
-        );
-      default: {
-        const label = getCatalogServiceLabel(service);
-        return (
-          <span
-            title={`Downloads from ${label}`}
-            className={`${base} border-[#4a4a4a] bg-[#282828] text-[#b3b3b3]`}
-          >
-            <Download className="h-3 w-3" />
-            {label}
-          </span>
-        );
-      }
+    const filterMap: Record<string, boolean> = {};
+    if (selectedType !== "all") {
+      filterMap[selectedType] = true;
     }
+    onSearch(query, filterMap, updated);
   };
 
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case "album":
-        return <Disc className="h-3.5 w-3.5" />;
-      case "playlist":
-        return <Music className="h-3.5 w-3.5" />;
-      case "podcast":
-      case "episode":
-        return <Mic className="h-3.5 w-3.5" />;
-      case "movie":
-        return <Film className="h-3.5 w-3.5" />;
-      case "show":
-        return <Tv className="h-3.5 w-3.5" />;
-      default:
-        return <Music className="h-3.5 w-3.5" />;
-    }
+  const handleQueueClick = async (item: SearchResultItem) => {
+    setQueuedIds((prev) => new Set(prev).add(item.id));
+    await onQueueItem(item);
   };
-
-  const showThumbnails = config?.show_search_thumbnails ?? true;
 
   return (
-    <div className="spotify-scrollbar spotify-fade-up ots-page flex flex-col gap-8 overflow-x-hidden">
-      <section className="ots-hero relative overflow-hidden px-6 py-8 md:px-10 md:py-12">
-        <div className="relative max-w-3xl">
-          <div className="mb-5 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-[#1ed760]">
-            <Sparkles className="h-4 w-4" /> Your music, your library
-          </div>
-          <h1 className="max-w-2xl text-3xl font-black tracking-tight text-white md:text-5xl">
-            Find something to download
-          </h1>
-          <p className="mt-3 max-w-xl text-sm leading-6 text-[#b3b3b3] md:text-base">
-            Search across your supported services or paste a direct link.
-            Everything you choose lands in the download queue.
-          </p>
+    <div className="space-y-5" id="search-dashboard">
+      {/* Search Header Card */}
+      <Card padding={4} elevation="low" id="search-bar-card">
+        <form onSubmit={handleSearchSubmit} className="space-y-4">
+          <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+            <div className="flex-1">
+              <TextInput
+                label="Search catalog query or paste URL"
+                isLabelHidden={true}
+                placeholder="Search tracks, artists, albums, or paste a Spotify, Deezer, Tidal, Apple Music URL..."
+                value={query}
+                onChange={(val) => setQuery(val)}
+                onEnter={handleSearchSubmit}
+                hasClear={true}
+                size="md"
+                startIcon={<Search className="w-4 h-4 text-neutral-400" />}
+              />
+            </div>
 
-          <form onSubmit={handleSearchSubmit} className="mt-6">
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <div className="ots-input relative flex h-12 min-w-0 flex-1 items-center px-4">
-                <Search className="h-5 w-5 shrink-0 text-[#6f6f6f]" />
-                <input
-                  id="global-search"
-                  type="text"
-                  value={query}
-                  onChange={(e) => onQueryChange(e.target.value)}
-                  placeholder="What do you want to download?"
-                  className="w-full bg-transparent px-3 py-0 text-sm text-white outline-none placeholder:text-[#6f6f6f]"
-                />
-              </div>
-              <button
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
                 type="submit"
-                disabled={
-                  loading ||
-                  (!/^https?:\/\//i.test(query.trim()) &&
-                    selectedServices.length === 0)
-                }
-                className="ots-button ots-button-primary ots-button-lg shrink-0 px-7 text-sm"
-              >
-                {loading ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                ) : (
-                  <Search className="h-5 w-5" />
-                )}
-                {loading ? "Searching" : "Search"}
-              </button>
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              <span className="mr-1 flex items-center gap-1.5 text-xs font-semibold text-[#8f8f8f]">
-                <Filter className="h-3.5 w-3.5" /> Search in
-              </span>
-              <div className="ots-browse-tabs max-w-full">
-                {Object.keys(filters).map((key) => (
-                  <button
-                    key={key}
-                    type="button"
-                    aria-pressed={filters[key]}
-                    onClick={() => toggleFilter(key)}
-                    className={`ots-browse-tab ${filters[key] ? "ots-browse-tab-active" : ""}`}
-                  >
-                    {key.charAt(0).toUpperCase() + key.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <span className="mr-1 flex items-center gap-1.5 text-xs font-semibold text-[#8f8f8f]">
-                <Headphones className="h-3.5 w-3.5" /> Search services
-              </span>
-              {availableServices.length > 0 ? (
-                <div className="ots-browse-tabs max-w-full">
-                  <button
-                    type="button"
-                    aria-pressed={
-                      selectedServices.length === availableServices.length
-                    }
-                    onClick={toggleAllServices}
-                    className={`ots-browse-tab ${selectedServices.length === availableServices.length ? "ots-browse-tab-active" : ""}`}
-                  >
-                    All services
-                  </button>
-                  {availableServices.map((service) => (
-                    <button
-                      key={service}
-                      type="button"
-                      aria-pressed={selectedServices.includes(service)}
-                      onClick={() => toggleService(service)}
-                      className={`ots-browse-tab ${selectedServices.includes(service) ? "ots-browse-tab-active" : ""}`}
-                    >
-                      {getCatalogServiceLabel(service)}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <span className="text-xs text-[var(--ots-warning)]">
-                  Add or reconnect a searchable account first.
-                </span>
+                variant="primary"
+                size="md"
+                label="Search Catalog"
+                icon={<Search className="w-4 h-4" />}
+                isLoading={isSearching}
+                id="btn-search-execute"
+              />
+              {query && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="md"
+                  label="Reset"
+                  onClick={() => {
+                    setQuery("");
+                    onSearch("", {}, selectedServices);
+                  }}
+                  id="btn-search-clear"
+                />
               )}
             </div>
-          </form>
-        </div>
-      </section>
-
-      <section>
-        <div className="mb-5 flex items-end justify-between gap-4">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#1ed760]">
-              Discover
-            </p>
-            <h2 className="mt-1 text-2xl font-bold tracking-tight text-white">
-              Search results
-            </h2>
           </div>
-          {results.length > 0 && (
-            <div className="flex flex-wrap items-center justify-end gap-1.5 text-xs font-semibold text-[#b3b3b3]">
-              <span>{results.length} items</span>
-              {resultServiceCounts.map(([service, count]) => (
-                <span
-                  key={service}
-                  className="rounded border border-[var(--ots-border)] bg-[var(--ots-field)] px-2 py-1"
-                >
-                  {getCatalogServiceLabel(service)} {count}
-                </span>
-              ))}
+
+          <Divider variant="subtle" />
+
+          {/* Filter Bar: Media Types (SegmentedControl) & Services */}
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 pt-0.5">
+            {/* Media Type Segmented Control */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-medium text-neutral-500">Type:</span>
+              <SegmentedControl
+                label="Media type filter"
+                value={selectedType}
+                onChange={handleTypeChange}
+                size="sm"
+              >
+                <SegmentedControlItem
+                  value="all"
+                  label="All Media"
+                  icon={<Sparkles className="w-3.5 h-3.5" />}
+                />
+                <SegmentedControlItem
+                  value="track"
+                  label="Tracks"
+                  icon={<Music2 className="w-3.5 h-3.5" />}
+                />
+                <SegmentedControlItem
+                  value="album"
+                  label="Albums"
+                  icon={<Disc3 className="w-3.5 h-3.5" />}
+                />
+                <SegmentedControlItem
+                  value="playlist"
+                  label="Playlists"
+                  icon={<ListMusic className="w-3.5 h-3.5" />}
+                />
+                <SegmentedControlItem
+                  value="podcast"
+                  label="Podcasts"
+                  icon={<Radio className="w-3.5 h-3.5" />}
+                />
+              </SegmentedControl>
             </div>
-          )}
-        </div>
 
-        {loading ? (
-          <div className="ots-panel flex flex-col items-center justify-center py-20 text-[#b3b3b3]">
-            <Loader2 className="h-8 w-8 animate-spin text-[#1ed760]" />
-            <p className="mt-4 text-sm font-semibold">Fetching media data...</p>
-          </div>
-        ) : results.length === 0 ? (
-          <div className="ots-panel border-dashed px-6 py-16 text-center">
-            <Music className="mx-auto h-10 w-10 text-[#535353]" />
-            <p className="mt-4 text-sm font-semibold text-[#b3b3b3]">
-              Search for an artist, track, album, or playlist to get started.
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-            {results.map((item) => {
-              const isEnqueued = enqueuedIds.has(item.id);
-              return (
-                <article
-                  key={item.id}
-                  className="ots-card group p-3 transition-colors hover:bg-[#242424]"
-                >
-                  <div className="relative aspect-square overflow-hidden rounded-md bg-[#282828] shadow-lg">
-                    <img
-                      src={
-                        item.thumbnail ||
-                        "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&auto=format&fit=crop&q=80"
-                      }
-                      alt={item.name}
-                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      referrerPolicy="no-referrer"
+            {/* Service Filters */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-medium text-neutral-500 mr-1">Services:</span>
+              {CATALOG_SERVICES.map((srv) => {
+                const isSelected = selectedServices.includes(srv.id);
+                return (
+                  <button
+                    key={srv.id}
+                    type="button"
+                    onClick={() => toggleService(srv.id)}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer border ${
+                      isSelected
+                        ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
+                        : "border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-800/50 text-neutral-600 dark:text-neutral-400 hover:border-neutral-300 dark:hover:border-neutral-700"
+                    }`}
+                  >
+                    <span
+                      className="w-2 h-2 rounded-full"
+                      style={{ backgroundColor: srv.color }}
                     />
-                    {item.explicit && (
-                      <span className="absolute bottom-2 left-2 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                        E
-                      </span>
-                    )}
-                    <button
-                      onClick={() => triggerDownload(item)}
-                      disabled={isEnqueued}
-                      className={`absolute bottom-2 right-2 flex h-11 w-11 items-center justify-center rounded-full text-white ots-on-green-text shadow-xl transition-all ${isEnqueued ? "bg-[#147f3e]" : "bg-[#147f3e] opacity-0 translate-y-2 group-hover:translate-y-0 group-hover:opacity-100 hover:scale-105 hover:bg-[#158642]"}`}
-                      title={isEnqueued ? "Queued" : "Download"}
-                    >
-                      {isEnqueued ? (
-                        <Check className="h-5 w-5" />
-                      ) : (
-                        <Download className="h-5 w-5" />
+                    <span>{srv.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </form>
+      </Card>
+
+      {/* Results Header */}
+      <SectionHeader
+        title="Catalog Media"
+        count={`${results.length} items`}
+        badgeVariant="neutral"
+        description="Click Queue Download to fetch audio with lossless quality and ID3 tags"
+      />
+
+      {/* Results Grid */}
+      {results.length < 1 ? (
+        <Card padding={6} elevation="low" id="search-empty-card">
+          <EmptyState
+            title="No media found"
+            description="Try searching with a track name, artist, or paste a direct streaming URL from Spotify, Deezer, Tidal, or Apple Music."
+            actions={
+              <Button
+                variant="secondary"
+                size="sm"
+                label="Reset Search Filters"
+                onClick={() => {
+                  setQuery("");
+                  setSelectedType("all");
+                  setSelectedServices([]);
+                  onSearch("", {}, []);
+                }}
+              />
+            }
+          />
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="results-grid">
+          {results.map((item) => {
+            const serviceInfo = getServiceInfo(item.item_service);
+            const isQueued = queuedIds.has(item.id);
+
+            return (
+              <Card
+                key={item.id}
+                padding={4}
+                elevation="low"
+                id={`media-card-${item.id}`}
+              >
+                <div className="flex flex-col justify-between h-full space-y-3.5">
+                  {/* Top: Thumbnail & Metadata */}
+                  <div className="flex gap-3.5 items-start">
+                    {/* Thumbnail Artwork */}
+                    <div className="relative w-20 h-20 shrink-0 rounded-lg overflow-hidden bg-neutral-100 dark:bg-neutral-800 border border-neutral-200/60 dark:border-neutral-700/60">
+                      <img
+                        src={item.thumbnail || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=160&auto=format&fit=crop&q=80"}
+                        alt={item.name}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                      <div className="absolute top-1.5 left-1.5">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full block ring-2 ring-white dark:ring-neutral-900 shadow-xs"
+                          style={{ backgroundColor: serviceInfo.color }}
+                          title={serviceInfo.name}
+                        />
+                      </div>
+                      {item.item_count && (
+                        <div className="absolute bottom-1 right-1 bg-black/75 backdrop-blur-xs text-[10px] text-white px-1.5 py-0.5 rounded font-medium">
+                          {item.item_count} items
+                        </div>
                       )}
-                    </button>
+                    </div>
+
+                    {/* Metadata Content */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-1.5">
+                        <h4
+                          className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 truncate leading-snug"
+                          title={item.name}
+                        >
+                          {item.name}
+                        </h4>
+                        {item.explicit && (
+                          <span className="text-[10px] font-bold text-neutral-500 border border-neutral-300 dark:border-neutral-700 px-1 rounded uppercase tracking-wider shrink-0">
+                            E
+                          </span>
+                        )}
+                      </div>
+
+                      <p
+                        className="text-xs text-neutral-600 dark:text-neutral-400 truncate mt-0.5"
+                        title={item.artist}
+                      >
+                        {item.artist}
+                      </p>
+
+                      <p
+                        className="text-[11px] text-neutral-400 truncate mt-0.5 min-h-[16px]"
+                        title={item.album}
+                      >
+                        {item.album && item.album !== item.name ? item.album : item.item_type.toUpperCase()}
+                      </p>
+
+                      <div className="flex items-center gap-2 text-[11px] text-neutral-500 mt-2">
+                        <span className="inline-flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-neutral-400" />
+                          {item.duration || "3:30"}
+                        </span>
+                        <span>•</span>
+                        <span className="inline-flex items-center gap-1 font-mono text-[10px] text-neutral-600 dark:text-neutral-400">
+                          <AudioWaveform className="w-3 h-3 text-neutral-400" />
+                          {item.bitrate || serviceInfo.maxBitrate}
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="min-w-0 pt-3">
-                    <h3
-                      className="truncate text-sm font-bold text-white"
-                      title={item.name}
-                    >
-                      {item.name}
-                    </h3>
-                    <p
-                      className="mt-1 truncate text-xs text-[#b3b3b3]"
-                      title={`${item.artist}${item.album ? ` • ${item.album}` : ""}`}
-                    >
-                      {item.artist}
-                      {item.album && ` • ${item.album}`}
-                    </p>
-                    <div className="mt-3 flex items-center gap-1.5 truncate text-[10px] font-semibold text-[#8f8f8f]">
-                      {getTypeIcon(item.item_type)}{" "}
-                      <span className="capitalize">{item.item_type}</span>
-                      <span>•</span>
-                      {getServiceBadge(item.item_service)}
-                    </div>
-                    <div className="mt-3 flex items-center gap-2 border-t border-[#2e2e2e] pt-3">
-                      <button
-                        onClick={() => triggerDownload(item)}
-                        disabled={isEnqueued}
-                        className={`ots-button ots-button-sm flex-1 ${isEnqueued ? "ots-queued-state" : "ots-button-primary"}`}
-                      >
-                        {isEnqueued ? "Queued" : "Download"}
-                      </button>
-                      <a
-                        href={item.item_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="ots-icon-button"
-                        title="Open source"
-                      >
-                        <ExternalLink className="h-4 w-4" />
-                      </a>
-                    </div>
+                  {/* Card Action Footer */}
+                  <div className="pt-3 border-t border-neutral-100 dark:border-neutral-800/80 flex items-center justify-between">
+                    <Badge
+                      variant={serviceInfo.badgeVariant}
+                      label={serviceInfo.name}
+                    />
+
+                    <Button
+                      variant={isQueued ? "secondary" : "primary"}
+                      size="sm"
+                      label={isQueued ? "Queued" : "Queue Download"}
+                      icon={
+                        isQueued ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
+                        ) : (
+                          <Download className="w-3.5 h-3.5" />
+                        )
+                      }
+                      onClick={() => handleQueueClick(item)}
+                      isDisabled={isQueued}
+                      id={`btn-queue-${item.id}`}
+                    />
                   </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };

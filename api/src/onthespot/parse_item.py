@@ -12,32 +12,29 @@ item to the ``parsing`` queue.
 episodes) ready for the download workers to pick up.
 """
 
-from .accounts import get_account_token
+import requests
 
-from .api.deezer import deezer_parse_url
+from .accounts import get_account_token
 from .api.generic import generic_get_track_metadata
 from .api.soundcloud import soundcloud_parse_url
 from .resources.regexes import (
     APPLE_MUSIC_URL_REGEX,
     BANDCAMP_URL_REGEX,
-    DEEZER_URL_REGEX,
+    CRUNCHYROLL_URL_REGEX,
     DEEZER_SHARE_URL_REGEX,
+    DEEZER_URL_REGEX,
     QOBUZ_URL_REGEX,
     SOUNDCLOUD_URL_REGEX,
     SPOTIFY_URL_REGEX,
     TIDAL_URL_REGEX,
-    YOUTUBE_URL_REGEX,
     YOUTUBE_MUSIC_URL_REGEX,
-    CRUNCHYROLL_URL_REGEX,
+    YOUTUBE_URL_REGEX,
 )
-
 from .runtimedata import (
     account_pool,
     get_logger,
     parsing,
-    parsing_lock,
 )
-
 
 logger = get_logger("parse_item")
 
@@ -59,17 +56,18 @@ class UrlMatcher:
     """Resolve a URL into ``(service, item_type, item_id)`` tuple.
 
     Returns ``None`` when the URL is not recognised by any built-in pattern
-    (callers should then try the generic yt-dlp fallback).
-    Return service as ``__handled__`` when parsed by the matcher itself (deezer share)
+    or ``True`` if handled by generic
     """
 
-    def match(self, url: str):
+    def match(self, url: str) -> tuple | bool | None:
         """Try each known service pattern in order.
 
         Returns
         -------
-        tuple[str, str, str] | None
-            ``(service, item_type, item_id)`` or ``None`` if unrecognised.
+        tuple[str, str, str]
+            ``(service, item_type, item_id)``
+            or ``True`` if handled by generic internal
+            ``None`` if unrecognised.
         """
         result = (
             self._try_apple_music(url)
@@ -84,6 +82,7 @@ class UrlMatcher:
             or self._try_youtube(url)
             or self._try_youtube_music(url)
             or self._try_crunchyroll(url)
+            or self._try_generic(url)
         )
         return result
 
@@ -91,7 +90,7 @@ class UrlMatcher:
     # Per-service helpers
     # ------------------------------------------------------------------
 
-    def _try_apple_music(self, url):
+    def _try_apple_music(self, url) -> tuple | None:
         match = APPLE_MUSIC_URL_REGEX.search(url)
         if not match:
             return None
@@ -102,7 +101,7 @@ class UrlMatcher:
             item_type = "track"
         return ("apple_music", item_type, item_id)
 
-    def _try_bandcamp(self, url):
+    def _try_bandcamp(self, url) -> tuple | None:
         match = BANDCAMP_URL_REGEX.search(url)
         if not match:
             return None
@@ -111,21 +110,21 @@ class UrlMatcher:
             item_type = "artist"
         return ("bandcamp", item_type, url)
 
-    def _try_deezer(self, url):
+    def _try_deezer(self, url) -> tuple | None:
         match = DEEZER_URL_REGEX.search(url)
         if not match:
             return None
         return ("deezer", match.group("type"), match.group("id"))
 
-    def _try_deezer_share(self, url):
+    def _try_deezer_share(self, url) -> tuple | None:
         if not DEEZER_SHARE_URL_REGEX.search(url):
             return None
-        # Delegate resolution to the deezer API layer; signal caller with a
-        # sentinel so parse_url knows it was handled.
-        deezer_parse_url(url)
-        return ("__handled__", "", "")
 
-    def _try_qobuz(self, url):
+        redirect_url = requests.get(url, timeout=10).url
+        result = self._try_deezer(redirect_url)
+        return result
+
+    def _try_qobuz(self, url) -> tuple | None:
         match = QOBUZ_URL_REGEX.search(url)
         if not match:
             return None
@@ -134,21 +133,21 @@ class UrlMatcher:
             item_type = "artist"
         return ("qobuz", item_type, match.group("id"))
 
-    def _try_soundcloud(self, url):
+    def _try_soundcloud(self, url) -> tuple | None:
         if not SOUNDCLOUD_URL_REGEX.search(url):
             return None
         token = get_account_token("soundcloud")
         item_type, item_id = soundcloud_parse_url(url, token)
         return ("soundcloud", item_type, item_id)
 
-    def _try_spotify_static(self, url):
+    def _try_spotify_static(self, url) -> tuple | None:
         if url == _SPOTIFY_LIKED_SONGS_URL:
             return ("spotify", "liked_songs", None)
         if url == _SPOTIFY_YOUR_EPISODES_URL:
             return ("spotify", "your_episodes", None)
         return None
 
-    def _try_spotify(self, url):
+    def _try_spotify(self, url) -> tuple | None:
         match = SPOTIFY_URL_REGEX.search(url)
         if not match:
             return None
@@ -160,13 +159,13 @@ class UrlMatcher:
             item_type = "podcast"
         return ("spotify", item_type, item_id)
 
-    def _try_tidal(self, url):
+    def _try_tidal(self, url) -> tuple | None:
         match = TIDAL_URL_REGEX.search(url)
         if not match:
             return None
         return ("tidal", match.group("type"), match.group("id"))
 
-    def _try_youtube_music(self, url):
+    def _try_youtube_music(self, url) -> tuple | None:
         match = YOUTUBE_MUSIC_URL_REGEX.search(url)
         if not match:
             return None
@@ -178,19 +177,55 @@ class UrlMatcher:
             return ("youtube_music", "playlist", match.group("playlist_id"))
         return None
 
-    def _try_youtube(self, url):
+    def _try_youtube(self, url) -> tuple | None:
         match = YOUTUBE_URL_REGEX.search(url)
         if not match:
             return None
         return ("youtube_music", "track", match.group("video_id"))
 
-    def _try_crunchyroll(self, url):
+    def _try_crunchyroll(self, url) -> tuple | None:
         match = CRUNCHYROLL_URL_REGEX.search(url)
         if not match:
             return None
         item_id = match.group("id") + "/" + match.group("title")
         item_type = "episode" if match.group("type") == "watch" else "show"
         return ("crunchyroll", item_type, item_id)
+
+    def _try_generic(self, url) -> tuple | bool | None:
+        is_generic_enabled = any(acc["service"] == "generic" for acc in account_pool)
+        if not is_generic_enabled:
+            logger.error("No generic account enabled")
+            return None
+
+        try:
+            logger.info("Unable to parse url, falling back to yt-dlp/generic: %s", url)
+            item_metadata = generic_get_track_metadata("", url)
+            # playlist, album or collection
+            if isinstance(item_metadata, list):
+                for i in item_metadata:
+                    item_metadata = generic_get_track_metadata("", i)
+                    if item_metadata is None or isinstance(item_metadata, list):
+                        logger.error("Unable to parse url: %s", url)
+                        continue
+
+                    parsing.put_nowait(
+                        {
+                            "item_url": url,
+                            "item_service": "generic",
+                            "item_type": "track",
+                            "item_id": url,
+                        }
+                    )
+                    logger.info("Handled by generic: %s", url)
+                return True
+            # single item
+            if isinstance(item_metadata, dict):
+                return ("generic", "track", url)
+            logger.info("Unable to parse url: %s", url)
+            return None
+        except Exception as exc:
+            logger.error('Error — possibly invalid URL: %s, "%s"', url, exc)
+            return None
 
 
 _url_matcher = UrlMatcher()
@@ -201,59 +236,33 @@ _url_matcher = UrlMatcher()
 # ---------------------------------------------------------------------------
 
 
-def parse_url(url: str) -> bool | None:
+def parse_url(url: str) -> bool:
     """Resolve *url* and add the resulting item to the parsing queue.
 
     Returns ``True`` if the URL was recognised and enqueued (or immediately
     handled), ``False`` if it was not recognised and there is no generic
-    fallback available, or ``None`` for non-URL inputs such as local file
-    paths (handled by the search layer).
+    fallback available.
     """
     resolved = _url_matcher.match(url)
 
-    if resolved is not None:
-        service, item_type, item_id = resolved
-        if service == "__handled__":
-            # URL was handled entirely inside _try_deezer_share
-            return True
-        with parsing_lock:
-            parsing[item_id] = {
-                "item_url": url,
-                "item_service": service,
-                "item_type": item_type,
-                "item_id": item_id,
-            }
-        return True  # enqueued; caller does not need a boolean
-
-    # Unknown URL — fall back to yt-dlp via the generic service
-    is_generic_enabled = any(acc["service"] == "generic" for acc in account_pool)
-    if not is_generic_enabled:
-        logger.info("Invalid Url: %s", url)
+    if resolved in [None, False]:
         return False
+    if resolved is True:
+        return True  # handled by generic matcher
 
-    try:
-        logger.info("Unable to parse url falling back to yt-dlp: %s", url)
-        item_metadata = generic_get_track_metadata("", url)
-        if item_metadata is True:
-            # Playlist handled internally by generic_get_track_metadata
-            return True
-        if item_metadata is None:
-            logger.info("Unable to parse url: %s", url)
-            return False
-        with parsing_lock:
-            parsing[url] = {
-                "item_url": url,
-                "item_service": "generic",
-                "item_type": "track",
-                "item_id": url,
-            }
-        return None
-    except Exception as exc:
-        logger.info('Error — possibly invalid URL: %s, "%s"', url, exc)
-        return False
+    service, item_type, item_id = resolved
+    parsing.put_nowait(
+        {
+            "item_url": url,
+            "item_service": service,
+            "item_type": item_type,
+            "item_id": item_id,
+        }
+    )
+    return True
 
 
-def get_search_results(search_term: str):
+def search(search_term: str) -> bool:
     """Checks the search term and delegates to the appropriate search function.
 
     Parameters

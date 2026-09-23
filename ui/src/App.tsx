@@ -1,989 +1,665 @@
-import React, {
-  lazy,
-  Suspense,
-  useEffect,
-  useState,
-  useCallback,
-  useRef,
-} from "react";
-import { v4 as uuidv4 } from "uuid";
-import { Navbar, NavTab } from "./components/Navbar";
-import { SearchDashboard } from "./components/SearchDashboard";
-import type { SettingsSection } from "./components/SettingsPage";
+import { AppShell } from "@astryxdesign/core/AppShell";
+import { Badge } from "@astryxdesign/core/Badge";
+import { Button } from "@astryxdesign/core/Button";
+import { SideNav, SideNavItem, SideNavSection } from "@astryxdesign/core/SideNav";
+import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { Theme } from "@astryxdesign/core/theme";
+import { TopNav } from "@astryxdesign/core/TopNav";
+import { gothicTheme } from "@astryxdesign/theme-gothic/built";
+import { neutralTheme } from "@astryxdesign/theme-neutral/built";
+import { stoneTheme } from "@astryxdesign/theme-stone/built";
+import {
+  Activity,
+  Bell,
+  Disc3,
+  Download,
+  ListPlus,
+  Music2,
+  Palette,
+  Sliders,
+  Terminal,
+  Users
+} from "lucide-react";
+import { useEffect, useState } from "react";
+
+import {
+  activateProfile,
+  addAccount,
+  addToQueue,
+  checkServerHealth,
+  clearAllPending,
+  clearCompletedDownloads,
+  clearFailedDownloads,
+  clearLogs,
+  configureYouTubeAuthentication,
+  DEFAULT_CONFIG,
+  DEFAULT_PROFILES,
+  deleteProfile,
+  executeQueueAction,
+  executeQueueBatchAction,
+  fetchAccountHealth,
+  fetchAccounts,
+  fetchDownloadQueue,
+  fetchLogs,
+  fetchOTSConfig,
+  fetchPendingQueue,
+  fetchProfiles,
+  reconnectAccounts,
+  removeAccount,
+  removePendingItems,
+  resetOTSConfig,
+  retryFailedDownloads,
+  saveOTSConfig,
+  saveProfile,
+  toggleQueuePause,
+  updateOTSConfigValue,
+  uploadYouTubeCookies
+} from "./lib/api";
+import { useNotifications } from "./lib/notifications";
+import {
+  AccountHealth,
+  AccountItem,
+  DownloadProfile,
+  DownloadQueueItem,
+  LogEntry,
+  OTSConfig,
+  ParsingJob,
+  PendingQueueItem,
+  QueueBatchAction,
+  SearchResultItem,
+} from "./types";
+
+import { AccountsManager } from "./components/AccountsManager";
+import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
+import { DownloadQueue } from "./components/DownloadQueue";
+import { LogViewer } from "./components/LogViewer";
 import { NotificationBanner } from "./components/NotificationBanner";
 import { NotificationHistory } from "./components/NotificationHistory";
-import {
-  OTSConfig,
-  DownloadQueueItem,
-  AccountItem,
-  LogEntry,
-  NotificationBannerItem,
-  SearchResultItem,
-  NotificationContent,
-  CustomTheme,
-  CustomThemePalette,
-  DEFAULT_CUSTOM_THEME,
-  SavedCustomTheme,
-  ThemePreset,
-  ThemeMode,
-} from "./types";
-import { useNotifications } from "./lib/notifications";
-import { installDocumentLocalization } from "./lib/localizeDocument";
-import {
-  fetchOTSConfig,
-  fetchDownloadQueue,
-  fetchAccounts,
-  fetchAccountHealth,
-  reconnectAccounts,
-  fetchServerLogs,
-  searchCatalog,
-  searchMedia,
-  clearQueueItems,
-  triggerRetryFailed,
-  performQueueAction,
-  updateOTSConfigValue,
-  saveOTSConfig,
-  resetOTSConfig,
-  addAccountService,
-  configureYouTubeAuthentication,
-  uploadYouTubeCookies,
-  removeAccountUUID,
-  check_api_version,
-  fetchUpdateInfo,
-  batchDownloadQueue,
-  verifyDownloadQueue,
-  fetchDownloadState,
-  setDownloadsPaused,
-  reorderDownloadQueue,
-  fetchDownloadProfiles,
-  setActiveDownloadProfile,
-  saveDownloadProfile,
-  deleteDownloadProfile,
-} from "./lib/api";
-import type { DownloadProfile, QueueBatchAction } from "./lib/api";
-import type { AccountHealth } from "./lib/api";
+import { ParsingPendingQueue } from "./components/ParsingPendingQueue";
+import { PlaylistAutomationPage } from "./components/PlaylistAutomationPage";
+import { SettingsPage } from "./components/SettingsPage";
 
-const DownloadQueue = lazy(() =>
-  import("./components/DownloadQueue").then((module) => ({
-    default: module.DownloadQueue,
-  })),
-);
-const SettingsPage = lazy(() =>
-  import("./components/SettingsPage").then((module) => ({
-    default: module.SettingsPage,
-  })),
-);
-const AccountsManager = lazy(() =>
-  import("./components/AccountsManager").then((module) => ({
-    default: module.AccountsManager,
-  })),
-);
-const PlaylistAutomationPage = lazy(() =>
-  import("./components/PlaylistAutomationPage").then((module) => ({
-    default: module.PlaylistAutomationPage,
-  })),
-);
-const LibraryPage = lazy(() =>
-  import("./components/LibraryPage").then((module) => ({
-    default: module.LibraryPage,
-  })),
-);
-const StatisticsPanel = lazy(() =>
-  import("./components/StatisticsPanel").then((module) => ({
-    default: module.StatisticsPanel,
-  })),
-);
-const DiagnosticsPanel = lazy(() =>
-  import("./components/DiagnosticsPanel").then((module) => ({
-    default: module.DiagnosticsPanel,
-  })),
-);
-const LogViewer = lazy(() =>
-  import("./components/LogViewer").then((module) => ({
-    default: module.LogViewer,
-  })),
-);
+type NavigationTab = "parsing" | "queue" | "accounts" | "playlist-automation" | "settings" | "diagnostics" | "logs";
 
-const SSEid = uuidv4();
-
-const PageLoading = () => (
-  <div className="ots-page flex min-h-[40vh] items-center justify-center text-sm text-[var(--spotify-text-muted)]">
-    Loading…
-  </div>
-);
-
-const isThemePreset = (value: string | null): value is ThemePreset =>
-  value === "spotify" ||
-  value === "midnight" ||
-  value === "forest" ||
-  value === "light" ||
-  value === "ocean" ||
-  value === "sunset" ||
-  value === "violet" ||
-  value === "rose" ||
-  value === "custom";
-
-const isHexColor = (value: unknown): value is string =>
-  typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
-
-const getHexLuminance = (hex: string): number => {
-  const channels = [1, 3, 5].map(
-    (offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255,
-  );
-  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
-};
-
-const isThemeMode = (value: unknown): value is ThemeMode =>
-  value === "light" || value === "dark";
-
-const isCustomThemePalette = (value: unknown): value is CustomThemePalette => {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<CustomThemePalette>;
-  return (
-    isHexColor(candidate.background) &&
-    isHexColor(candidate.surface) &&
-    isHexColor(candidate.elevated) &&
-    isHexColor(candidate.accent) &&
-    isHexColor(candidate.text) &&
-    isHexColor(candidate.muted)
-  );
-};
-
-const isCustomTheme = (value: unknown): value is CustomTheme => {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<CustomTheme>;
-  return (
-    isThemeMode(candidate.mode) &&
-    isCustomThemePalette(candidate.dark) &&
-    isCustomThemePalette(candidate.light)
-  );
-};
-
-const cloneDefaultCustomTheme = (): CustomTheme => ({
-  mode: DEFAULT_CUSTOM_THEME.mode,
-  dark: { ...DEFAULT_CUSTOM_THEME.dark },
-  light: { ...DEFAULT_CUSTOM_THEME.light },
-});
-
-const migrateLegacyCustomTheme = (value: unknown): CustomTheme | null => {
-  if (!value || typeof value !== "object") return null;
-  const legacy = value as Partial<CustomThemePalette> & { mode?: unknown };
-  if (
-    !isThemeMode(legacy.mode) ||
-    !isHexColor(legacy.background) ||
-    !isHexColor(legacy.surface) ||
-    !isHexColor(legacy.elevated) ||
-    !isHexColor(legacy.accent) ||
-    !isHexColor(legacy.text) ||
-    !isHexColor(legacy.muted)
-  ) {
-    return null;
-  }
-
-  const legacyPalette: CustomThemePalette = {
-    background: legacy.background,
-    surface: legacy.surface,
-    elevated: legacy.elevated,
-    accent: legacy.accent,
-    text: legacy.text,
-    muted: legacy.muted,
-  };
-  const legacyLooksLight =
-    getHexLuminance(legacy.background) > getHexLuminance(legacy.text);
-
-  return {
-    mode: legacy.mode,
-    dark: !legacyLooksLight
-      ? legacyPalette
-      : { ...DEFAULT_CUSTOM_THEME.dark, accent: legacy.accent },
-    light: legacyLooksLight
-      ? legacyPalette
-      : { ...DEFAULT_CUSTOM_THEME.light, accent: legacy.accent },
-  };
-};
-
-const readStoredThemePreset = (): ThemePreset | null => {
-  try {
-    const stored = window.localStorage.getItem("ots-theme-preset");
-    return isThemePreset(stored) ? stored : null;
-  } catch {
-    return null;
-  }
-};
-
-const readStoredCustomTheme = (): CustomTheme => {
-  try {
-    const stored = window.localStorage.getItem("ots-custom-theme");
-    if (stored) {
-      const parsed: unknown = JSON.parse(stored);
-      if (isCustomTheme(parsed)) return parsed;
-      const migrated = migrateLegacyCustomTheme(parsed);
-      if (migrated) return migrated;
-    }
-  } catch {
-    // Use the default palette when browser storage is unavailable or invalid.
-  }
-  return cloneDefaultCustomTheme();
-};
-
-const CUSTOM_THEMES_STORAGE_KEY = "ots-custom-themes";
-
-const cloneCustomTheme = (theme: CustomTheme): CustomTheme => ({
-  mode: theme.mode,
-  dark: { ...theme.dark },
-  light: { ...theme.light },
-});
-
-const isSavedCustomTheme = (value: unknown): value is SavedCustomTheme => {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<SavedCustomTheme>;
-  return (
-    typeof candidate.id === "string" &&
-    candidate.id.length > 0 &&
-    typeof candidate.name === "string" &&
-    candidate.name.trim().length > 0 &&
-    isCustomTheme(candidate.theme) &&
-    typeof candidate.updatedAt === "number" &&
-    Number.isFinite(candidate.updatedAt)
-  );
-};
-
-const readStoredCustomThemes = (): SavedCustomTheme[] => {
-  try {
-    const stored = window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY);
-    if (!stored) return [];
-    const parsed: unknown = JSON.parse(stored);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isSavedCustomTheme).slice(0, 50);
-  } catch {
-    return [];
-  }
-};
-
-const persistStoredCustomThemes = (themes: SavedCustomTheme[]) => {
-  try {
-    window.localStorage.setItem(
-      CUSTOM_THEMES_STORAGE_KEY,
-      JSON.stringify(themes),
-    );
-  } catch {
-    // Saved themes still remain available for this session when storage is unavailable.
-  }
-};
-
-const createCustomThemeId = (): string => {
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-  ) {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-};
-
-const readStoredThemeMode = (): ThemeMode | null => {
-  try {
-    const stored = window.localStorage.getItem("ots-theme-mode");
-    return isThemeMode(stored) ? stored : null;
-  } catch {
-    return null;
-  }
-};
-
-const getCustomThemeStyle = (
-  theme: CustomTheme,
-  mode: ThemeMode = theme.mode,
-): React.CSSProperties => {
-  const palette = theme[mode];
-  return {
-    "--spotify-black": palette.background,
-    "--spotify-surface": palette.surface,
-    "--spotify-surface-elevated": palette.elevated,
-    "--spotify-text": palette.text,
-    "--spotify-muted": palette.muted,
-    "--spotify-green": palette.accent,
-    "--spotify-green-bright": `color-mix(in srgb, ${palette.accent} 78%, white)`,
-    "--ots-green-contrast": `color-mix(in srgb, ${palette.accent} 72%, ${palette.background})`,
-    "--ots-green-contrast-hover": `color-mix(in srgb, ${palette.accent} 84%, ${palette.background})`,
-    "--ots-border": `color-mix(in srgb, ${palette.text} 18%, ${palette.background})`,
-    "--ots-border-strong": `color-mix(in srgb, ${palette.text} 30%, ${palette.background})`,
-    "--ots-field": `color-mix(in srgb, ${palette.surface} 72%, ${palette.background})`,
-    "--ots-danger": mode === "light" ? "#b42318" : "#ff7b7b",
-    "--ots-on-accent":
-      getHexLuminance(palette.accent) > 0.55 ? "#181818" : "#ffffff",
-  } as React.CSSProperties;
-};
-
-const initialTabFromLocation = (): NavTab => {
-  const tab = new URLSearchParams(window.location.search).get("tab");
-  const validTabs: NavTab[] = [
-    "dashboard",
-    "playlist-automation",
-    "queue",
-    "settings",
-    "accounts",
-    "diagnostics",
-    "logs",
-  ];
-  return validTabs.includes(tab as NavTab) ? (tab as NavTab) : "dashboard";
-};
+export const uuid = Math.random().toString(36).substring(2, 7)
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<NavTab>(initialTabFromLocation);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [settingsSection, setSettingsSection] =
-    useState<SettingsSection>("general");
-  const [config, setConfig] = useState<OTSConfig | null>(null);
-  const [queue, setQueue] = useState<DownloadQueueItem[]>([]);
-  const [accounts, setAccounts] = useState<AccountItem[]>([]);
-  const [accountHealth, setAccountHealth] = useState<AccountHealth | null>(
-    null,
+  const [activeTab, setActiveTab] = useState<NavigationTab>(() =>
+    new URLSearchParams(window.location.search).get("tab") === "playlist-automation"
+      ? "playlist-automation"
+      : "parsing",
   );
-  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [settingsInitialTab, setSettingsInitialTab] = useState("general");
+  const [themeMode, setThemeMode] = useState<"neutral" | "stone" | "gothic">("neutral");
+  const [mode, setMode] = useState<'light' | 'dark'>('dark');
+  const [notificationHistoryOpen, setNotificationHistoryOpen] = useState(false);
+  const [hasNewVersion, setHasNewVersion] = useState(false);
 
+  // Real-time Notification Banner & History Hook
   const {
     notifications,
     history,
+    addNotification,
     dismissNotification,
     clearHistory,
-    lastStatusChange,
-  } = useNotifications(SSEid);
-  const [notificationHistoryOpen, setNotificationHistoryOpen] = useState(false);
-  const [wsConnected, setWsConnected] = useState(false);
-  const [themePreset, setThemePreset] = useState<ThemePreset>(
-    () => readStoredThemePreset() ?? "spotify",
-  );
-  const [customTheme, setCustomTheme] = useState<CustomTheme>(() =>
-    readStoredCustomTheme(),
-  );
-  const [savedCustomThemes, setSavedCustomThemes] = useState<
-    SavedCustomTheme[]
-  >(() => readStoredCustomThemes());
-  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
-    const storedMode = readStoredThemeMode();
-    if (storedMode) return storedMode;
-    const storedPreset = readStoredThemePreset();
-    if (storedPreset === "light") return "light";
-    if (storedPreset === "custom") return readStoredCustomTheme().mode;
-    return "dark";
-  });
-  const isDarkMode: "light" | "dark" = themeMode;
-  const [hasNewVersion, SetNewVersion] = useState(false);
-  const [downloadsPaused, setDownloadsPausedState] = useState(false);
-  const [downloadSpeed, setDownloadSpeed] = useState(0);
-  const [downloadEta, setDownloadEta] = useState(0);
-  const [profiles, setProfiles] = useState<DownloadProfile[]>([]);
-  const [activeProfile, setActiveProfile] = useState("");
-  const themePersistenceRef = useRef<Promise<void>>(Promise.resolve());
-  const profileMutationRef = useRef(0);
+  } = useNotifications(`ots-user-${uuid}`);
 
-  // Initial load
-  const loadData = useCallback(async () => {
-    const [
-      cfg,
-      qData,
-      accData,
-      healthData,
-      logData,
-      downloadState,
-      profileData,
-    ] = await Promise.all([
-      fetchOTSConfig(),
-      fetchDownloadQueue(),
-      fetchAccounts(),
-      fetchAccountHealth(),
-      fetchServerLogs(),
-      fetchDownloadState(),
-      fetchDownloadProfiles(),
-    ]);
-    if (cfg) {
-      setWsConnected(true); // Set Connection status
-      setConfig(cfg);
-      // Respect a browser-selected preset; otherwise initialize from backend theme state.
-      if (!readStoredThemePreset()) {
-        const backendThemeMode: ThemeMode =
-          cfg.theme === "dark" ? "dark" : "light";
-        setThemePreset(backendThemeMode === "dark" ? "spotify" : "light");
-        setThemeMode(backendThemeMode);
+  // App Data States
+  const [config, setConfig] = useState<OTSConfig>(DEFAULT_CONFIG);
+  const [queue, setQueue] = useState<DownloadQueueItem[]>([]);
+  const [parsingJobs, setParsingJobs] = useState<ParsingJob[]>([]);
+  const [pendingQueue, setPendingQueue] = useState<PendingQueueItem[]>([]);
+  const [accounts, setAccounts] = useState<AccountItem[]>([]);
+  const [accountHealth, setAccountHealth] = useState<AccountHealth | null>(null);
+  const [profiles, setProfiles] = useState<DownloadProfile[]>(DEFAULT_PROFILES);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [downloadsPaused, setDownloadsPaused] = useState(false);
+  const [serverStatus, setServerStatus] = useState<"online" | "offline">("online");
+  const [serverVersion, setServerVersion] = useState("0.8.2-fastapi");
+
+  // Load initial data
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const [
+          health,
+          cfg,
+          q,
+          pQueue,
+          accs,
+          profs,
+          lgs,
+          acctHealth,
+        ] = await Promise.all([
+          checkServerHealth().catch(() => ({ status: "offline" as const, version: "", target: "" })),
+          fetchOTSConfig().catch(() => DEFAULT_CONFIG),
+          fetchDownloadQueue().catch(() => []),
+          fetchPendingQueue().catch(() => []),
+          fetchAccounts().catch(() => []),
+          fetchProfiles().catch(() => DEFAULT_PROFILES),
+          fetchLogs().catch(() => []),
+          fetchAccountHealth().catch(() => null),
+        ]);
+
+        setServerStatus(health.status);
+        setServerVersion(health.version);
+        setConfig(cfg);
+        setQueue(q);
+        setPendingQueue(pQueue);
+        setAccounts(accs);
+        setAccountHealth(acctHealth);
+        setProfiles(profs);
+        setLogs(lgs);
+      } catch (err) {
+        console.error("Initialization error", err);
       }
     }
-    if (qData) setQueue(qData);
-    if (accData) setAccounts(accData);
-    setAccountHealth(healthData);
-    if (logData) setLogs(logData);
-    setDownloadsPausedState(downloadState.paused);
-    setDownloadSpeed(downloadState.speed);
-    setDownloadEta(downloadState.eta_seconds);
-    // Do not let a slow initial request overwrite a selection made while the
-    // settings page was opening.
-    if (profileMutationRef.current === 0) {
-      setProfiles(profileData.profiles);
-      setActiveProfile(profileData.active);
-    }
+
+    loadData();
   }, []);
 
   useEffect(() => {
-    void loadData();
-  }, [loadData]);
-
-  useEffect(() => {
-    if (isDarkMode === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  }, [isDarkMode]);
-
-  useEffect(() => {
-    const locale = (config?.language || "en_US").replace("_", "-");
-    document.documentElement.lang = locale;
-    document.documentElement.dataset.applicationLanguage = locale;
-  }, [config?.language]);
-
-  useEffect(
-    () => installDocumentLocalization(config?.language || "en_US"),
-    [config?.language],
-  );
-
-  //  useEffect(() => {
-  //    if (!config || config.check_for_updates === false) {
-  //      SetNewVersion(false);
-  //      return;
-  //    }
-  //    let mounted = true;
-  //    const checkUpdates = async () => {
-  //      const status = await fetchUpdateInfo();
-  //      if (mounted) SetNewVersion(Boolean(status?.update_available));
-  //    };
-  //    void checkUpdates();
-  //    const interval = window.setInterval(
-  //      () => void checkUpdates(),
-  //      6 * 60 * 60 * 1000,
-  //    );
-  //    return () => {
-  //      mounted = false;
-  //      window.clearInterval(interval);
-  //    };
-  //  }, [config?.check_for_updates]);
-
-  useEffect(() => {
-    const handleShortcut = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        const input = document.getElementById(
-          "global-search",
-        ) as HTMLInputElement | null;
-        input?.focus();
+    async function refreshQueue() {
+      try {
+        const [
+          q,
+          pQueue,
+        ] = await Promise.all([
+          fetchDownloadQueue().catch(() => []),
+          fetchPendingQueue().catch(() => []),
+        ]);
+        setQueue(q);
+        setPendingQueue(pQueue);
+      } catch (err) {
+        console.error("Initialization error", err);
       }
-    };
-    window.addEventListener("keydown", handleShortcut);
-    return () => window.removeEventListener("keydown", handleShortcut);
-  }, []);
-
-  useEffect(() => {
-    async function fetchQueueData() {
-      const q = await fetchDownloadQueue();
-      if (q) setQueue(q);
     }
-    fetchQueueData();
+
+    refreshQueue();
   }, [notifications]);
 
-  //  useEffect(() => {
-  //    let mounted = true;
-  //    const refreshAccountHealth = async () => {
-  //      const [freshAccounts, freshHealth] = await Promise.all([
-  //        fetchAccounts(),
-  //        fetchAccountHealth(),
-  //      ]);
-  //      if (mounted) {
-  //        setAccounts(freshAccounts);
-  //        setAccountHealth(freshHealth);
-  //      }
-  //    };
-  //    void refreshAccountHealth();
-  //    const interval = window.setInterval(
-  //      () => void refreshAccountHealth(),
-  //      60000,
-  //    );
-  //    return () => {
-  //      mounted = false;
-  //      window.clearInterval(interval);
-  //    };
-  //  }, []);
+  // Parsing & Pending Action Handlers
+  const handleParseUrl = async (url: string, profileId?: string, autoQueue?: boolean) => {
+    await addToQueue(url);
+    addNotification({
+      title: `Url: ${url}`,
+      message: `Added to Parsing Queue`,
+    });
+  };
 
-  const persistThemeMode = (newMode: ThemeMode) => {
-    themePersistenceRef.current = themePersistenceRef.current
-      .catch(() => undefined)
-      .then(async () => {
-        if (!config) return;
-        await updateOTSConfigValue("theme", newMode);
-        setConfig((prev) => (prev ? { ...prev, theme: newMode } : null));
-        await saveOTSConfig();
+  const handleCancelJob = async (jobId: string) => {
+    return
+  };
+
+  const handleDeleteJob = async (jobId: string) => {
+    return
+  };
+
+  const handleClearCompletedJobs = async () => {
+    return
+  };
+
+  const handleQueuePendingItems = async (itemIds: string[], profileId?: string) => {
+    const [pending, updatedQueue] = await Promise.all([
+      fetchPendingQueue(),
+      fetchDownloadQueue(),
+    ]);
+    
+
+    if (updatedQueue != queue) {
+      addNotification({
+        title: `Queued ${updatedQueue.length} track(s)`,
+        message: `Transferred ${updatedQueue.length} parsed track(s) to the download queue.`,
+        status: "Downloading",
+        thumbnail: updatedQueue[0].thumbnail,
       });
-    return themePersistenceRef.current;
-  };
-
-  const handleThemeChange = async (newPreset: ThemePreset) => {
-    // Presets choose the colour palette; the Light/Dark control owns the mode.
-    // Keeping these independent prevents clicking a preset from changing mode.
-    setThemePreset(newPreset);
-    try {
-      window.localStorage.setItem("ots-theme-preset", newPreset);
-      window.localStorage.setItem("ots-theme-mode", themeMode);
-    } catch {
-      // Theme still applies for this session when storage is unavailable.
     }
+    setPendingQueue(pending);
+    setQueue(updatedQueue);
   };
 
-  const handleCustomThemeChange = async (newCustomTheme: CustomTheme) => {
-    setCustomTheme(newCustomTheme);
-    setThemePreset("custom");
-    setThemeMode(newCustomTheme.mode);
-    try {
-      window.localStorage.setItem(
-        "ots-custom-theme",
-        JSON.stringify(newCustomTheme),
-      );
-      window.localStorage.setItem("ots-theme-preset", "custom");
-      window.localStorage.setItem("ots-theme-mode", newCustomTheme.mode);
-    } catch {
-      // Theme still applies for this session when storage is unavailable.
-    }
-    await persistThemeMode(newCustomTheme.mode);
+  const handleRemovePendingItems = async (itemIds: string[]) => {
+    await removePendingItems(itemIds);
+    const pending = await fetchPendingQueue();
+    setPendingQueue(pending);
   };
 
-  const handleSaveCustomTheme = async (name: string): Promise<boolean> => {
-    const normalizedName = name.trim();
-    if (!normalizedName) return false;
-
-    const snapshot: CustomTheme = cloneCustomTheme({
-      ...customTheme,
-      mode: themeMode,
-    });
-    const existing = savedCustomThemes.find(
-      (savedTheme) =>
-        savedTheme.name.toLocaleLowerCase() ===
-        normalizedName.toLocaleLowerCase(),
-    );
-    const nextTheme: SavedCustomTheme = {
-      id: existing?.id ?? createCustomThemeId(),
-      name: normalizedName,
-      theme: snapshot,
-      updatedAt: Date.now(),
-    };
-    const nextThemes = existing
-      ? savedCustomThemes.map((savedTheme) =>
-          savedTheme.id === existing.id ? nextTheme : savedTheme,
-        )
-      : [nextTheme, ...savedCustomThemes].slice(0, 50);
-
-    setSavedCustomThemes(nextThemes);
-    persistStoredCustomThemes(nextThemes);
-    return true;
+  const handleClearAllPending = async () => {
+    await clearAllPending();
+    setPendingQueue([]);
   };
 
-  const handleLoadCustomTheme = async (savedTheme: SavedCustomTheme) => {
-    await handleCustomThemeChange({
-      ...cloneCustomTheme(savedTheme.theme),
-      mode: themeMode,
-    });
+  const handleRefreshParsingQueue = async () => {
+    const [pending] = await Promise.all([
+      fetchPendingQueue(),
+    ]);
+    setPendingQueue(pending);
   };
 
-  const handleDeleteCustomTheme = async (id: string) => {
-    const nextThemes = savedCustomThemes.filter(
-      (savedTheme) => savedTheme.id !== id,
-    );
-    setSavedCustomThemes(nextThemes);
-    persistStoredCustomThemes(nextThemes);
-  };
-
-  const handleThemeModeChange = async (newMode: ThemeMode) => {
-    setThemeMode(newMode);
-    if (themePreset === "custom") {
-      await handleCustomThemeChange({ ...customTheme, mode: newMode });
-      return;
-    }
-    try {
-      window.localStorage.setItem("ots-theme-mode", newMode);
-    } catch {
-      // Theme still applies for this session when storage is unavailable.
-    }
-    await persistThemeMode(newMode);
-  };
-
-  const toggleTheme = async () => {
-    await handleThemeModeChange(isDarkMode === "dark" ? "light" : "dark");
-  };
-
-  const checkNewVersion = async () => {
-    const status = await fetchUpdateInfo(true);
-    if (status) {
-      SetNewVersion(Boolean(status.update_available));
-      return;
-    }
-    const latest = await check_api_version();
-    SetNewVersion(!latest);
-  };
-
-  const handleDismissNotification = (id: string) => {
-    dismissNotification(id);
-  };
-
-  const handleDownloadItem = async (
-    query: string,
-    filters?: Record<string, boolean>,
-  ): Promise<boolean> => {
-    return searchMedia(query, filters);
-  };
-
-  const handleClearCompleted = async () => {
-    await clearQueueItems("Downloaded");
-    const q = await fetchDownloadQueue();
-    setQueue(q);
-  };
-
-  const handleClearFailed = async () => {
-    await clearQueueItems("Failed");
-    const q = await fetchDownloadQueue();
-    setQueue(q);
-  };
-
-  const handleRetryFailed = async () => {
-    await triggerRetryFailed();
-    const q = await fetchDownloadQueue();
-    setQueue(q);
+  // Queue actions
+  const handlePauseToggle = async () => {
+    const isPaused = await toggleQueuePause();
+    setDownloadsPaused(isPaused);
+    const updatedQueue = await fetchDownloadQueue();
+    setQueue(updatedQueue);
+    return isPaused;
   };
 
   const handleQueueAction = async (
-    local_id: string,
-    action: "cancel" | "delete" | "retry",
+    local_id: number,
+    action: "cancel" | "delete" | "retry"
   ) => {
-    const succeeded = await performQueueAction(local_id, action);
-    if (succeeded && action === "cancel") {
-      // Reflect the terminal state immediately while the worker unwinds its
-      // current network/read operation and publishes the same event.
-      setQueue((current) =>
-        current.map((item) =>
-          item.local_id === local_id
-            ? {
-                ...item,
-                item_status: "Cancelled",
-                error: "Cancelled by the user.",
-              }
-            : item,
-        ),
-      );
-    }
-    const q = await fetchDownloadQueue();
-    setQueue(q);
+    await executeQueueAction(local_id, action);
+    const updatedQueue = await fetchDownloadQueue();
+    setQueue(updatedQueue);
   };
 
   const handleBatchAction = async (
-    local_ids: string[],
+    local_ids: number[],
     action: QueueBatchAction,
-    options: { priority?: number; profile_id?: string } = {},
+    options?: any
   ) => {
-    await batchDownloadQueue(local_ids, action, options);
-    setQueue(await fetchDownloadQueue());
+    await executeQueueBatchAction(local_ids, action, options);
+    const updatedQueue = await fetchDownloadQueue();
+    setQueue(updatedQueue);
   };
 
-  const handleVerifyQueue = async () => {
-    return;
-    await verifyDownloadQueue([], true);
-    setQueue(await fetchDownloadQueue());
+  const handleClearCompleted = async () => {
+    await clearCompletedDownloads();
+    const updatedQueue = await fetchDownloadQueue();
+    setQueue(updatedQueue);
   };
 
-  const handlePauseToggle = async () => {
-    return;
-    const ok = await setDownloadsPaused(!downloadsPaused);
-    if (ok) setDownloadsPausedState(!downloadsPaused);
-    const state = await fetchDownloadState();
-    setDownloadSpeed(state.speed);
-    setDownloadEta(state.eta_seconds);
-    const q = await fetchDownloadQueue();
-    setQueue(q);
+  const handleClearFailed = async () => {
+    await clearFailedDownloads();
+    const updatedQueue = await fetchDownloadQueue();
+    setQueue(updatedQueue);
+  };
+
+  const handleRetryFailed = async () => {
+    await retryFailedDownloads();
+    const updatedQueue = await fetchDownloadQueue();
+    setQueue(updatedQueue);
   };
 
   const handleReorder = async (local_ids: string[]) => {
-    await reorderDownloadQueue(local_ids);
-    setQueue(await fetchDownloadQueue());
+    return
   };
 
-  const handleProfileChange = async (profile_id: string) => {
-    if (await setActiveDownloadProfile(profile_id)) {
-      setActiveProfile(profile_id);
-      setConfig((prev) =>
-        prev ? { ...prev, active_download_profile: profile_id } : prev,
-      );
-    }
+  // Accounts actions
+  const handleAddAccount = async (service: string, credentials: any) => {
+    const newAcc = await addAccount(service, credentials);
+    const [updatedAccounts, updatedHealth] = await Promise.all([
+      fetchAccounts(),
+      fetchAccountHealth(),
+    ]);
+    setAccounts(updatedAccounts);
+    setAccountHealth(updatedHealth);
+
+    addNotification({
+      title: "Account Connected",
+      message: `Successfully connected ${service.toUpperCase()} worker account.`,
+      status: "success",
+    });
+    return newAcc;
   };
 
-  const handleSaveProfile = async (profile: DownloadProfile) => {
-    const saved = await saveDownloadProfile(profile);
-    if (saved) {
-      const fresh = await fetchDownloadProfiles();
-      setProfiles(fresh.profiles);
-      setActiveProfile(fresh.active);
-    }
-    return saved;
+  const handleRemoveAccount = async (uuid: string) => {
+    const success = await removeAccount(uuid);
+    const [updatedAccounts, updatedHealth] = await Promise.all([
+      fetchAccounts(),
+      fetchAccountHealth(),
+    ]);
+    setAccounts(updatedAccounts);
+    setAccountHealth(updatedHealth);
+    return success;
   };
 
-  const handleDeleteProfile = async (profile_id: string) => {
-    const ok = await deleteDownloadProfile(profile_id);
-    if (ok) {
-      const fresh = await fetchDownloadProfiles();
-      setProfiles(fresh.profiles);
-      setActiveProfile(fresh.active);
-    }
-    return ok;
+  const handleRefreshAccounts = async () => {
+    const [updatedAccounts, updatedHealth] = await Promise.all([
+      fetchAccounts(),
+      fetchAccountHealth(),
+    ]);
+    setAccounts(updatedAccounts);
+    setAccountHealth(updatedHealth);
+    return updatedAccounts;
   };
 
-  const handleActivateProfile = async (profile_id: string) => {
-    const previousProfile = activeProfile;
-    profileMutationRef.current += 1;
-    setActiveProfile(profile_id);
-    setConfig((prev) =>
-      prev ? { ...prev, active_download_profile: profile_id } : prev,
-    );
-
-    const ok = await setActiveDownloadProfile(profile_id);
-    if (!ok) {
-      setActiveProfile(previousProfile);
-      setConfig((prev) =>
-        prev ? { ...prev, active_download_profile: previousProfile } : prev,
-      );
-    }
-    return ok;
+  const handleReconnectWorkers = async () => {
+    const success = await reconnectAccounts();
+    const [updatedAccounts, updatedHealth] = await Promise.all([
+      fetchAccounts(),
+      fetchAccountHealth(),
+    ]);
+    setAccounts(updatedAccounts);
+    setAccountHealth(updatedHealth);
+    return success;
   };
 
+  // Settings actions
   const handleUpdateConfigValue = async (
     key: string,
     value: any,
   ): Promise<boolean> => {
     const ok = await updateOTSConfigValue(key, value);
     if (ok) {
-      setConfig((prev) => (prev ? { ...prev, [key]: value } : null));
+      setConfig((prev) => ({ ...prev, [key]: value }));
+      return true
     }
-    return ok;
+    return false
   };
 
-  const handleSaveConfig = async (): Promise<boolean> => {
-    return await saveOTSConfig();
+  const handleSaveConfig = async () => {
+    await saveOTSConfig();
+
+    addNotification({
+      title: "Configuration Saved",
+      message: "OnTheSpot settings and profile parameters have been saved.",
+      status: "success",
+    });
+    return true;
   };
 
   const handleResetConfig = async () => {
-    const fresh = await resetOTSConfig();
-    if (fresh) setConfig(fresh);
+    const def = await resetOTSConfig();
+    setConfig(def);
   };
 
-  const handleAddAccount = async (
-    service: string,
-    creds: { username?: string; token?: string },
-  ) => {
-    const acc = await addAccountService(service, creds);
-    if (acc) {
-      const fresh = await fetchAccounts();
-      setAccounts(fresh);
-      setAccountHealth(await fetchAccountHealth());
-    }
-    return acc;
+  // Profiles actions
+  const handleActivateProfile = async (profileId: string) => {
+    await activateProfile(profileId);
+    const profs = await fetchProfiles();
+    setProfiles(profs);
+    setConfig((prev) => ({ ...prev, active_download_profile: profileId }));
+    return;
   };
 
-  const handleRefreshAccounts = useCallback(async () => {
-    const [freshAccounts, freshHealth] = await Promise.all([
-      fetchAccounts(),
-      fetchAccountHealth(),
-    ]);
-    setAccounts(freshAccounts);
-    setAccountHealth(freshHealth);
-    return freshAccounts;
-  }, []);
-
-  const handleConfigureYouTubeAuthentication = async (authentication: {
-    mode: "none" | "browser" | "cookie_file";
-    browser?: string;
-    cookie_file?: string;
-  }) => {
-    const ok = await configureYouTubeAuthentication(authentication);
-    if (ok) {
-      const fresh = await fetchOTSConfig();
-      if (fresh) setConfig(fresh);
-    }
-    return ok;
+  const handleSaveProfile = async (profile: DownloadProfile) => {
+    const saved = await saveProfile(profile);
+    const profs = await fetchProfiles();
+    setProfiles(profs);
+    return saved;
   };
 
-  const handleUploadYouTubeCookies = async (file: File) => {
-    const status = await uploadYouTubeCookies(file);
-    if (status) {
-      const fresh = await fetchOTSConfig();
-      if (fresh) setConfig(fresh);
-    }
-    return status;
+  const handleDeleteProfile = async (profileId: string) => {
+    const deleted = await deleteProfile(profileId);
+    const profs = await fetchProfiles();
+    setProfiles(profs);
+    return deleted;
   };
 
-  const handleRemoveAccount = async (uuid: string) => {
-    const ok = await removeAccountUUID(uuid);
-    if (ok) {
-      setAccounts((prev) => prev.filter((a) => a.uuid !== uuid));
-      setAccountHealth(await fetchAccountHealth());
-    }
-    return ok;
-  };
-
-  const handleReconnectAccounts = async () => {
-    const ok = await reconnectAccounts();
-    if (ok) {
-      window.setTimeout(async () => {
-        setAccounts(await fetchAccounts());
-        setAccountHealth(await fetchAccountHealth());
-      }, 1500);
-    }
-    return ok;
-  };
-
-  const handleClearLogs = () => {
+  // Logs actions
+  const handleClearLogs = async () => {
+    await clearLogs();
     setLogs([]);
   };
 
   const handleRefreshLogs = async () => {
-    const fresh = await fetchServerLogs();
-    setLogs(fresh);
+    const updatedLogs = await fetchLogs();
+    setLogs(updatedLogs);
   };
 
-  const activeDownloadsCount = queue.filter(
-    (i) => i.item_status === "Downloading" || i.item_status === "Paused",
-  ).length;
+  // Current active theme object
+  const currentTheme =
+    themeMode === "stone"
+      ? stoneTheme
+      : themeMode === "gothic"
+      ? gothicTheme
+      : neutralTheme;
+
+  // Counts for navigation badges
+  const activeDownloadsCount = queue.filter((i) => i.item_status === "Downloading").length;
+  const waitingCount = queue.filter((i) => i.item_status === "Waiting").length;
+  const pendingCount = activeDownloadsCount + waitingCount;
 
   return (
-    <div
-      className={`theme-${themePreset} ${isDarkMode === "dark" ? "dark-theme" : "light-theme"} min-h-screen antialiased`}
-      style={
-        themePreset === "custom"
-          ? getCustomThemeStyle(customTheme, themeMode)
-          : undefined
-      }
-    >
-      <Navbar
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        queueCount={
-          queue.filter(
-            (i) =>
-              i.item_status === "Waiting" ||
-              i.item_status === "Downloading" ||
-              i.item_status === "Paused",
-          ).length
+    <Theme theme={currentTheme} mode={mode}>
+      <AppShell
+        height="fill"
+        contentPadding={4}
+        variant="elevated"
+        topNav={
+          <TopNav
+            label="OnTheSpot Main Navigation"
+            heading={
+              <div className="flex items-center gap-2.5 py-1">
+                <div className="w-8 h-8 rounded-lg bg-neutral-900 dark:bg-neutral-100 flex items-center justify-center text-white dark:text-neutral-900 shadow-xs">
+                  <Disc3 className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-semibold text-sm tracking-tight text-neutral-900 dark:text-neutral-100">
+                      OnTheSpot
+                    </span>
+                    <Badge variant="neutral" label={serverVersion} />
+                  </div>
+                </div>
+              </div>
+            }
+            centerContent={
+              <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-neutral-100 dark:bg-neutral-800/80 border border-neutral-200 dark:border-neutral-700/60 text-xs">
+                <StatusDot
+                  variant={serverStatus === "online" ? "success" : "error"}
+                  label={serverStatus === "online" ? "Online" : "Offline"}
+                />
+                <span className="text-neutral-700 dark:text-neutral-300 font-medium">
+                  {serverStatus === "online" ? "FastAPI Core Ready" : "Disconnected"}
+                </span>
+                {activeDownloadsCount > 0 && (
+                  <>
+                    <span className="text-neutral-300 dark:text-neutral-600">•</span>
+                    <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                      {activeDownloadsCount} active download{activeDownloadsCount > 1 ? "s" : ""}
+                    </span>
+                  </>
+                )}
+              </div>
+            }
+            endContent={
+              <div className="flex items-center gap-2 invisible w-0 sm:visible sm:w-auto">
+                {/* Theme Selector Group */}
+                <div className="flex items-center gap-1 p-0.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-xs">
+                  <Palette className="w-3.5 h-3.5 ml-1.5 text-neutral-400" />
+                  {(["neutral", "stone", "gothic"] as const).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setThemeMode(t)}
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium capitalize transition cursor-pointer ${
+                        themeMode === t
+                          ? "bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-100 shadow-xs"
+                          : "text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Notification History Button in place of Queue button */}
+                <Button
+                  variant={notificationHistoryOpen ? "primary" : "secondary"}
+                  size="sm"
+                  label={`History (${history.length})`}
+                  icon={<Bell className="w-3.5 h-3.5 text-emerald-500" />}
+                  onClick={() => setNotificationHistoryOpen(true)}
+                  id="btn-header-notifications"
+                />
+              </div>
+            }
+          />
         }
-        activeDownloads={activeDownloadsCount}
-        accountCount={accounts.length}
-        appVersion={config?.version || "v2.0.0 Alpha 2"}
-        isDarkMode={isDarkMode}
-        toggleTheme={toggleTheme}
-        notificationHistoryCount={history.length}
-        onOpenNotificationHistory={() => setNotificationHistoryOpen(true)}
-        language={config?.language || "en_US"}
-      />
+        sideNav={
+          <SideNav
+            collapsible={true}
+          >
+            <SideNavSection title="Downloader">
+              <SideNavItem
+                label="Parsing & Pending"
+                icon={<ListPlus className="w-4 h-4" />}
+                isSelected={activeTab === "parsing"}
+                onClick={() => setActiveTab("parsing")}
+                endContent={
+                  pendingQueue.length > 0 ? (
+                    <Badge variant="warning" label={String(pendingQueue.length)} />
+                  ) : undefined
+                }
+              />
+              <SideNavItem
+                label="Download Queue"
+                icon={<Download className="w-4 h-4" />}
+                isSelected={activeTab === "queue"}
+                onClick={() => setActiveTab("queue")}
+                endContent={
+                  pendingCount > 0 ? (
+                    <Badge variant="info" label={String(pendingCount)} />
+                  ) : (
+                    <span className="text-[11px] text-neutral-400 font-mono">{queue.length}</span>
+                  )
+                }
+              />
+              <SideNavItem
+                label="Media Accounts"
+                icon={<Users className="w-4 h-4" />}
+                isSelected={activeTab === "accounts"}
+                onClick={() => setActiveTab("accounts")}
+                endContent={
+                  <Badge variant="success" label={String(accounts.length)} />
+                }
+              />
+              <SideNavItem
+                label="Playlist Automation"
+                icon={<Music2 className="w-4 h-4" />}
+                isSelected={activeTab === "playlist-automation"}
+                onClick={() => setActiveTab("playlist-automation")}
+              />
+            </SideNavSection>
 
-      <main className="min-h-screen pb-10 md:ml-64">
-        <Suspense fallback={<PageLoading />}>
-          {activeTab === "dashboard" && (
-            <SearchDashboard
-              onSearch={searchCatalog}
-              onDownload={handleDownloadItem}
-              config={config}
-              accounts={accounts}
-              query={searchQuery}
-              onQueryChange={setSearchQuery}
-            />
-          )}
-
-          {activeTab === "playlist-automation" && (
-            <PlaylistAutomationPage
-              onOpenApiConfig={() => {
-                setSettingsSection("search");
-                setActiveTab("settings");
-              }}
-              onDownloadPlaylist={handleDownloadItem}
-            />
-          )}
-
-          {activeTab === "library" && (
-            <LibraryPage
-              onQueueChanged={async () => setQueue(await fetchDownloadQueue())}
+            <SideNavSection title="System">
+              <SideNavItem
+                label="Settings"
+                icon={<Sliders className="w-4 h-4" />}
+                isSelected={activeTab === "settings"}
+                onClick={() => setActiveTab("settings")}
+              />
+              <SideNavItem
+                label="Diagnostics"
+                icon={<Activity className="w-4 h-4" />}
+                isSelected={activeTab === "diagnostics"}
+                onClick={() => setActiveTab("diagnostics")}
+              />
+              <SideNavItem
+                label="Event Logs"
+                icon={<Terminal className="w-4 h-4" />}
+                isSelected={activeTab === "logs"}
+                onClick={() => setActiveTab("logs")}
+                endContent={
+                  <span className="text-[11px] font-mono text-neutral-400">
+                    {logs.length}
+                  </span>
+                }
+              />
+            </SideNavSection>
+          </SideNav>
+        }
+      >
+        {/* Main Content View Container */}
+        <div className="max-w-7xl mx-auto pb-8">
+          {activeTab === "parsing" && (
+            <ParsingPendingQueue
+              jobs={parsingJobs}
+              pendingItems={pendingQueue}
+              profiles={profiles}
+              activeProfile={config.active_download_profile || ""}
+              onChangeActiveProfile={handleActivateProfile}
+              onParseUrl={handleParseUrl}
+              onCancelJob={handleCancelJob}
+              onDeleteJob={handleDeleteJob}
+              onClearCompletedJobs={handleClearCompletedJobs}
+              onQueuePendingItems={handleQueuePendingItems}
+              onRemovePendingItems={handleRemovePendingItems}
+              onClearAllPending={handleClearAllPending}
+              onRefresh={handleRefreshParsingQueue}
             />
           )}
 
           {activeTab === "queue" && (
             <DownloadQueue
               queue={queue}
+              downloadsPaused={downloadsPaused}
+              profiles={profiles}
+              activeProfile={config.active_download_profile || ""}
+              onPauseToggle={handlePauseToggle}
               onClearCompleted={handleClearCompleted}
               onClearFailed={handleClearFailed}
               onRetryFailed={handleRetryFailed}
               onAction={handleQueueAction}
-              onPauseToggle={handlePauseToggle}
-              downloadsPaused={downloadsPaused}
-              downloadSpeed={downloadSpeed}
-              downloadEta={downloadEta}
-              onReorder={handleReorder}
-              profiles={profiles}
-              activeProfile={activeProfile}
-              onProfileChange={handleProfileChange}
               onBatchAction={handleBatchAction}
-              onVerify={handleVerifyQueue}
-              config={config}
-            />
-          )}
-
-          {activeTab === "settings" && (
-            <SettingsPage
-              initialSection={settingsSection}
-              config={config}
-              onUpdateValue={handleUpdateConfigValue}
-              onSave={handleSaveConfig}
-              onReset={handleResetConfig}
-              profiles={profiles}
-              activeProfile={activeProfile}
-              onSaveProfile={handleSaveProfile}
-              onDeleteProfile={handleDeleteProfile}
-              onActivateProfile={handleActivateProfile}
-              themePreset={themePreset}
-              onThemeChange={handleThemeChange}
-              themeMode={themeMode}
-              onThemeModeChange={handleThemeModeChange}
-              customTheme={customTheme}
-              onCustomThemeChange={handleCustomThemeChange}
-              savedCustomThemes={savedCustomThemes}
-              onSaveCustomTheme={handleSaveCustomTheme}
-              onLoadCustomTheme={handleLoadCustomTheme}
-              onDeleteCustomTheme={handleDeleteCustomTheme}
+              onReorder={handleReorder}
             />
           )}
 
           {activeTab === "accounts" && (
             <AccountsManager
-              accounts={accounts.length > 0 ? accounts : config?.accounts || []}
+              accounts={accounts}
+              health={accountHealth}
               onAddAccount={handleAddAccount}
               onRemoveAccount={handleRemoveAccount}
               onRefreshAccounts={handleRefreshAccounts}
-              health={accountHealth}
-              onReconnect={handleReconnectAccounts}
-              onConfigureYouTubeAuthentication={
-                handleConfigureYouTubeAuthentication
-              }
-              onUploadYouTubeCookies={handleUploadYouTubeCookies}
-              youtubeAuthenticationMode={config?.youtube_auth_mode || "none"}
-              youtubeBrowser={config?.youtube_cookies_browser || ""}
-              youtubeCookieFile={config?.youtube_cookies_file || ""}
+              onReconnect={handleReconnectWorkers}
+              onConfigureYouTubeAuthentication={configureYouTubeAuthentication}
+              onUploadYouTubeCookies={uploadYouTubeCookies}
+              youtubeAuthenticationMode={config.youtube_authentication_mode}
+              youtubeBrowser={config.youtube_browser}
+              youtubeCookieFile={config.youtube_cookie_file}
             />
           )}
 
-          {activeTab === "statistics" && <StatisticsPanel />}
+          {activeTab === "playlist-automation" && (
+            <PlaylistAutomationPage
+              onOpenApiConfig={() => {
+                setSettingsInitialTab("integrations");
+                setActiveTab("settings");
+              }}
+              onDownloadPlaylist={async (url) => {
+                try {
+                  await addToQueue(url);
+                  setQueue(await fetchDownloadQueue());
+                  return true;
+                } catch (error) {
+                  addNotification({
+                    title: "Could not queue playlist",
+                    message: error instanceof Error ? error.message : String(error),
+                    status: "error",
+                  });
+                  return false;
+                }
+              }}
+            />
+          )}
+
+          {activeTab === "settings" && (
+            <SettingsPage
+              initialTab={settingsInitialTab}
+              config={config}
+              profiles={profiles}
+              activeProfile={config.active_download_profile || ""}
+              onUpdateValue={handleUpdateConfigValue}
+              onSave={handleSaveConfig}
+              onReset={handleResetConfig}
+              onActivateProfile={handleActivateProfile}
+              onSaveProfile={handleSaveProfile}
+              onDeleteProfile={handleDeleteProfile}
+            />
+          )}
 
           {activeTab === "diagnostics" && (
             <DiagnosticsPanel
-              wsConnected={wsConnected}
+              wsConnected={serverStatus === "online"}
               newVersion={hasNewVersion}
-              checkVersion={checkNewVersion}
+              config={config}
             />
           )}
 
@@ -994,22 +670,24 @@ export default function App() {
               onClear={handleClearLogs}
             />
           )}
-        </Suspense>
-      </main>
+        </div>
+      </AppShell>
 
-      {/* Real-time floating notification banners */}
+      {/* Floating Auto-dismiss Notification Banner Alert */}
       <NotificationBanner
         notifications={notifications}
-        onDismiss={handleDismissNotification}
-        disabled={config?.disable_download_popups}
+        onDismiss={dismissNotification}
+        disabled={config.disable_download_popups}
       />
+
+      {/* Notification Activity History Panel / Dialog */}
       <NotificationHistory
         history={history}
         onClear={clearHistory}
         open={notificationHistoryOpen}
         onOpenChange={setNotificationHistoryOpen}
-        hideTrigger
+        hideTrigger={true}
       />
-    </div>
+    </Theme>
   );
 }

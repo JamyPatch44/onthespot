@@ -10,7 +10,6 @@ from typing import Any
 
 from .otsconfig import config
 
-
 _lock = threading.RLock()
 _MAX_EVENTS = 5000
 _SUCCESS_STATUSES = {"Downloaded", "Already Exists"}
@@ -18,7 +17,7 @@ _FAILURE_STATUSES = {"Failed", "Cancelled", "Unavailable"}
 
 
 def _history_path() -> str:
-    root = config.get("_cache_dir") or os.path.join(os.path.expanduser("~"), ".onthespot")
+    root = config.get("_cache_dir")
     return os.path.join(root, "download-history.json")
 
 
