@@ -363,7 +363,7 @@ def spotify_get_oauth_token():
             logger.error("[OAUTH] Malformed token response: %s", str(e))
             return None
         _oauth_token_cache["access_token"] = access_token
-        _oauth_token_cache["client_id"] = int(client_id)
+        _oauth_token_cache["client_id"] = client_id
         # Refresh a little early (5 min buffer) to avoid mid-call expiry.
         _oauth_token_cache["expires_at"] = time.time() + expires_in - 300
         logger.info("[AUTH] Using Web API credentials (OAuth) for Spotify metadata/search")
