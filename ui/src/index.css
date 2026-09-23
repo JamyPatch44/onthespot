@@ -6,4 +6,5 @@
 @import "@astryxdesign/theme-stone/theme.css";
 @import "@astryxdesign/theme-gothic/theme.css";
 @import "tailwindcss";
+@import "./legacy-ui.css";
 
