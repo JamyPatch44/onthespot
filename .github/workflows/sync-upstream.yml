@@ -1,0 +1,86 @@
+name: Sync upstream and publish full-features image
+
+on:
+  schedule:
+    # Check outside the top of the hour, when GitHub Actions is busiest.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: full-features-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      updated: ${{ steps.merge.outputs.updated }}
+      image_ref: ${{ steps.merge.outputs.image_ref }}
+    steps:
+      - name: Check out full-features branch
+        uses: actions/checkout@v5
+        with:
+          ref: fastapi-dev-full-features
+          fetch-depth: 0
+
+      - name: Merge upstream fastapi-dev when there are new commits
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git remote add upstream https://github.com/ots-downloader/onthespot.git
+          git fetch --no-tags origin fastapi-dev-full-features
+          git fetch --no-tags upstream fastapi-dev
+          git checkout -B fastapi-dev-full-features origin/fastapi-dev-full-features
+
+          if git merge-base --is-ancestor upstream/fastapi-dev HEAD; then
+            echo "The full-features branch already contains upstream fastapi-dev."
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if ! git merge --no-edit --no-ff upstream/fastapi-dev; then
+            conflicts="$(git diff --name-only --diff-filter=U | paste -sd ', ' -)"
+            git merge --abort || true
+            echo "::error title=Upstream merge conflict::Could not merge upstream fastapi-dev into fastapi-dev-full-features. Conflicts: ${conflicts}"
+            exit 1
+          fi
+
+          image_ref="$(git rev-parse HEAD)"
+          git push origin HEAD:refs/heads/fastapi-dev-full-features
+          echo "updated=true" >> "$GITHUB_OUTPUT"
+          echo "image_ref=$image_ref" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: sync
+    if: needs.sync.outputs.updated == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out merged branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.sync.outputs.image_ref }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish updated image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/jamypatch44/onthespot:fastapi-dev-full-features
+            ghcr.io/jamypatch44/onthespot:${{ needs.sync.outputs.image_ref }}
