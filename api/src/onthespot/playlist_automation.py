@@ -481,6 +481,13 @@ class PlaylistAutomation:
         value = re.sub(r"\s[-–]\s*(?:\d{4}\s*)?(?:remaster(?:ed)?|deluxe(?: edition)?|anniversary edition|radio edit|explicit version|album version)\b.*$", "", value)
         return re.sub(r"\s+", " ", value).strip()
 
+    @classmethod
+    def _version_group_key(cls, track: dict[str, Any], preference: str) -> str:
+        """Group versions by title globally or by title and artist."""
+        if preference.startswith("Global:"):
+            return cls._version_title_key(str(track.get("name", "")))
+        return cls._version_key(track)
+
     @staticmethod
     def _sort_value(track: dict[str, Any], field: str) -> Any:
         if field in {"artist", "primary_artist"}:
@@ -631,10 +638,11 @@ class PlaylistAutomation:
         versions_replaced = 0
         if body.get("version_replacer"):
             best: dict[str, dict[str, Any]] = {}
+            version_preference = str(body.get("version_preference") or "Artist Only: Oldest Version")
             for track in tracks:
-                key = self._version_key(track)
+                key = self._version_group_key(track, version_preference)
                 current = best.get(key)
-                newest = "Newest" in str(body.get("version_preference") or "")
+                newest = "Newest" in version_preference
                 release_score = self._release_key(str(track.get("release_date", "")))
                 score = (release_score, int(track.get("popularity", 0) or 0), int(track.get("duration_ms", 0) or 0)) if newest else tuple(-part for part in release_score) + (int(track.get("popularity", 0) or 0), int(track.get("duration_ms", 0) or 0))
                 old_score = ((self._release_key(str(current.get("release_date", ""))), int(current.get("popularity", 0) or 0), int(current.get("duration_ms", 0) or 0)) if newest else tuple(-part for part in self._release_key(str(current.get("release_date", "")))) + (int(current.get("popularity", 0) or 0), int(current.get("duration_ms", 0) or 0))) if current else (None,)
@@ -732,7 +740,9 @@ class PlaylistAutomation:
             candidate = self._track_from_payload(raw)
             if candidate.get("id") == track.get("id"):
                 continue
-            if self._version_title_key(str(candidate.get("name", ""))) != title_key or self._primary_artist(candidate) != artist_key:
+            if self._version_title_key(str(candidate.get("name", ""))) != title_key:
+                continue
+            if not global_search and self._primary_artist(candidate) != artist_key:
                 continue
             candidates.append(candidate)
         return candidates
