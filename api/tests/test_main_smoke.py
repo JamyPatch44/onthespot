@@ -530,6 +530,57 @@ class ApiSmokeTests(unittest.TestCase):
         self.assertNotIn("spotify:local:artist:album:track:1", str(requests))
         self.assertEqual(requests[1][2], {"uris": ["spotify:track:remote"], "position": 1})
 
+    def test_sort_apply_runs_sort_when_all_suggestions_are_rejected(self):
+        service = PlaylistAutomation()
+        original = [
+            {
+                "id": "track-b",
+                "uri": "spotify:track:b",
+                "name": "Beta",
+                "artist": "Artist",
+                "album": "Album",
+            },
+            {
+                "id": "track-a",
+                "uri": "spotify:track:a",
+                "name": "Alpha",
+                "artist": "Artist",
+                "album": "Album",
+            },
+        ]
+        rejected = [
+            {"type": "replace", "track_id": "track-b", "remTitle": "Beta"},
+            {"type": "duplicate", "track_id": "track-a", "remTitle": "Alpha"},
+        ]
+        writes = []
+        state = {"ignored_tracks": [], "history": []}
+        service.playlist_tracks = lambda _playlist_id, include_local=False: original
+        service.playlists = lambda: [{"id": "target", "name": "Target"}]
+        service._write_order_preserving_local = (
+            lambda _playlist_id, uris, _original: writes.append(uris) or True
+        )
+        service._load_state = lambda: state
+        service._save_state = lambda updated: state.update(updated)
+
+        result = service.sort_apply(
+            {
+                "playlist_id": "target",
+                "approved_changes": [],
+                "rejected_changes": rejected,
+                "sort_enabled": True,
+                "sort_rules": [{"field": "name", "descending": False}],
+            }
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(writes, [["spotify:track:a", "spotify:track:b"]])
+        self.assertEqual(state["history"][0]["changes"], [])
+        self.assertEqual(state["history"][0]["ignored"], rejected)
+        self.assertEqual(
+            {item["track_id"] for item in state["ignored_tracks"]},
+            {"track-a", "track-b"},
+        )
+
     def test_cors_allows_local_vite_but_not_arbitrary_origins(self):
         headers = {
             "Access-Control-Request-Method": "GET",

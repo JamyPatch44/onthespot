@@ -926,16 +926,21 @@ export const PlaylistAutomationPage: React.FC<PlaylistAutomationPageProps> = ({ 
   };
   const applyReview = async () => {
     if (!requireLive()) return;
-    if (approvedReviewCount === 0) {
-      setMessage("Select at least one change to apply, or cancel to leave the playlists unchanged.");
+    const sortOnly = approvedReviewCount === 0;
+    if (sortOnly && !sortEnabled) {
+      setMessage("Enable Sort tracks to continue without applying suggested changes.");
       return;
     }
-    setProcessingStatus("Applying approved changes to your playlist" + (previews.length === 1 ? "…" : "s…"));
+    setProcessingStatus(
+      sortOnly
+        ? "Sorting playlists and rejecting suggested changes…"
+        : "Applying approved changes to your playlist" + (previews.length === 1 ? "…" : "s…"),
+    );
     setBusy("apply");
     let count = 0;
     for (const preview of previews) {
-      const yes = preview.changes.filter((change) => approved[preview.playlist_id]?.has(change.id));
-      const no = preview.changes.filter((change) => !approved[preview.playlist_id]?.has(change.id));
+      const yes = preview.changes.filter((change) => approved[preview.playlist_id]?.has(change.id) ?? true);
+      const no = preview.changes.filter((change) => !(approved[preview.playlist_id]?.has(change.id) ?? true));
       const result = await applySelectedPlaylistSorting({
         playlist_id: preview.playlist_id,
         approved_changes: yes,
@@ -946,11 +951,29 @@ export const PlaylistAutomationPage: React.FC<PlaylistAutomationPageProps> = ({ 
       if (result?.success) count += 1;
     }
     setBusy("");
-    appendDebug(count ? "Passed" : "Warning", "Applied playlist processing to " + count + " playlist" + (count === 1 ? "." : "s."));
+    appendDebug(
+      count ? "Passed" : "Warning",
+      (sortOnly ? "Sorted playlists and rejected suggested changes for " : "Applied playlist processing to ") +
+        count +
+        " playlist" +
+        (count === 1 ? "." : "s."),
+    );
     setModal(null);
     setHistory(await fetchPlaylistAutomationHistory());
-    setProcessingStatus(count ? "All reviews completed and changes applied." : "No playlist changes could be applied.");
-    setMessage("Processed " + count + " playlist" + (count === 1 ? "." : "s."));
+    setProcessingStatus(
+      count
+        ? sortOnly
+          ? "Playlists sorted; suggested changes were rejected."
+          : "All reviews completed and changes applied."
+        : "No playlist changes could be applied.",
+    );
+    setMessage(
+      sortOnly
+        ? count
+          ? "Sorted " + count + " playlist" + (count === 1 ? "." : "s.") + "; rejected suggestions were added to Ignored tracks."
+          : "Could not sort the selected playlists."
+        : "Processed " + count + " playlist" + (count === 1 ? "." : "s."),
+    );
   };
 
   const createBackup = async () => {
@@ -3152,17 +3175,25 @@ export const PlaylistAutomationPage: React.FC<PlaylistAutomationPageProps> = ({ 
               </button>
               {approvedReviewCount === 0 && (
                 <p className="text-xs text-[#999]" role="status">
-                  Select at least one change to apply. Cancel to leave the playlists unchanged.
+                  {sortEnabled
+                    ? "No suggestions will be applied; sorting will run, and rejected suggestions will be added to Ignored tracks."
+                    : "Enable Sort tracks to continue without applying suggested changes."}
                 </p>
               )}
               <button
                 type="button"
                 onClick={() => void applyReview()}
-                disabled={busy === "apply" || approvedReviewCount === 0}
+                disabled={busy === "apply" || (approvedReviewCount === 0 && !sortEnabled)}
                 className="ots-button ots-button-primary"
               >
-                <Check className="h-4 w-4" />{" "}
-                {busy === "apply" ? "Applying…" : "Apply " + approvedReviewCount + " Change" + (approvedReviewCount === 1 ? "" : "s")}
+                {approvedReviewCount === 0 ? <ListMusic className="h-4 w-4" /> : <Check className="h-4 w-4" />}{" "}
+                {busy === "apply"
+                  ? approvedReviewCount === 0
+                    ? "Sorting…"
+                    : "Applying…"
+                  : approvedReviewCount === 0
+                    ? "Sort only"
+                    : "Apply " + approvedReviewCount + " Change" + (approvedReviewCount === 1 ? "" : "s")}
               </button>
             </div>
           </div>
