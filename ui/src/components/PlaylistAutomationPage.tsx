@@ -383,7 +383,9 @@ export const PlaylistAutomationPage: React.FC<PlaylistAutomationPageProps> = ({ 
       ),
     [reviewQuery, reviewRows],
   );
-  const approvedReviewCount = reviewRows.filter(({ preview, change }) => approved[preview.playlist_id]?.has(change.id)).length;
+  const approvedReviewCount = reviewRows.filter(
+    ({ preview, change }) => approved[preview.playlist_id]?.has(change.id) ?? true,
+  ).length;
   const duplicateReviewCount = reviewRows.filter(({ change }) => change.type === "duplicate").length;
   const replacementReviewCount = reviewRows.filter(({ change }) => change.type === "replace").length;
   const visibleIgnored = useMemo(
@@ -924,6 +926,10 @@ export const PlaylistAutomationPage: React.FC<PlaylistAutomationPageProps> = ({ 
   };
   const applyReview = async () => {
     if (!requireLive()) return;
+    if (approvedReviewCount === 0) {
+      setMessage("Select at least one change to apply, or cancel to leave the playlists unchanged.");
+      return;
+    }
     setProcessingStatus("Applying approved changes to your playlist" + (previews.length === 1 ? "…" : "s…"));
     setBusy("apply");
     let count = 0;
@@ -3140,10 +3146,15 @@ export const PlaylistAutomationPage: React.FC<PlaylistAutomationPageProps> = ({ 
                 </p>
               )}
             </div>
-            <div className="flex justify-between gap-2 border-t border-[var(--ots-border)] pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ots-border)] pt-4">
               <button type="button" onClick={() => setModal(null)} className={buttonClass}>
                 Cancel
               </button>
+              {approvedReviewCount === 0 && (
+                <p className="text-xs text-[#999]" role="status">
+                  Select at least one change to apply. Cancel to leave the playlists unchanged.
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => void applyReview()}
