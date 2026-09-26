@@ -5,7 +5,7 @@ import re
 
 # Audio services
 APPLE_MUSIC_URL_REGEX = re.compile(
-    r"https?://music.apple.com/([a-z]{2})/(?P<type>album|playlist|artist)"
+    r"https?://music.apple.com/([a-z]{2})/(?P<type>album|playlist|artist|song)"
     r"(?:/(?P<title>[-a-z0-9]+))?/(?P<id>[\w.-]+)"
     r"(?:\?i=(?P<track_id>\d+))?(?:&.*)?$"
 )
