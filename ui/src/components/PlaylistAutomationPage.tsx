@@ -859,16 +859,29 @@ export const PlaylistAutomationPage: React.FC<PlaylistAutomationPageProps> = ({ 
           sorted: sortEnabled,
         },
       }));
-    } else
-      next = await scanSelectedPlaylistsForSorting({
-        playlist_ids: selected,
-        sort_enabled: sortEnabled,
-        sort_rules: rules,
-        dupes_enabled: dupes,
-        dupe_preference: dupePreference,
-        version_enabled: versions,
-        version_preference: versionPreference,
-      });
+    } else {
+      try {
+        next = await scanSelectedPlaylistsForSorting({
+          playlist_ids: selected,
+          sort_enabled: sortEnabled,
+          sort_rules: rules,
+          dupes_enabled: dupes,
+          dupe_preference: dupePreference,
+          version_enabled: versions,
+          version_preference: versionPreference,
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        const failure = "Could not scan selected playlists: " + detail;
+        setBusy("");
+        setPreviews([]);
+        setModal(null);
+        appendDebug("Error", failure);
+        setProcessingStatus("Playlist scan failed.");
+        setMessage(failure);
+        return;
+      }
+    }
     setBusy("");
     setPreviews(next);
     setReviewQuery("");
@@ -917,11 +930,17 @@ export const PlaylistAutomationPage: React.FC<PlaylistAutomationPageProps> = ({ 
     } else if (sortablePlaylists.length) {
       setProcessingStatus("Demo mode found playlist order changes, but nothing was changed.");
       setMessage("Demo mode is read-only. Connect Spotify to apply the new playlist order.");
+    } else if (!next.length) {
+      setModal(null);
+      const failure = "The scan returned no playlist results. Refresh the playlist list and try again.";
+      appendDebug("Warning", failure);
+      setProcessingStatus("Playlist scan returned no results.");
+      setMessage(failure);
     } else {
       setModal(null);
-      appendDebug(next.length ? "Info" : "Warning", next.length ? "No playlist changes found." : "No playlists could be scanned.");
+      appendDebug("Info", "No playlist changes found.");
       setProcessingStatus("No changes found for the selected playlists.");
-      setMessage(next.length ? "No changes found for the selected playlists." : "No playlists could be scanned.");
+      setMessage("");
     }
   };
   const applyReview = async () => {

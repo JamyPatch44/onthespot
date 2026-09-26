@@ -296,7 +296,14 @@ class PlaylistAutomation:
             cooldown = get_rate_limit_delay("api.spotify.com")
             if cooldown > 0:
                 time.sleep(cooldown)
-            response = requests.request(method, f"{BASE_URL}{path}", headers=headers, timeout=30, **kwargs)
+            try:
+                response = requests.request(
+                    method, f"{BASE_URL}{path}", headers=headers, timeout=30, **kwargs
+                )
+            except requests.RequestException as exc:
+                raise PlaylistAutomationError(
+                    f"Could not reach Spotify API during {method} {path}: {exc}"
+                ) from exc
             if response.status_code == 401 and attempt == 0:
                 with self._lock:
                     self._token["expires_at"] = 0
@@ -752,6 +759,12 @@ class PlaylistAutomation:
         if not playlist_ids:
             raise PlaylistAutomationError("Select at least one playlist to sort")
         playlists = {row["id"]: row for row in self.playlists()}
+        missing = [playlist_id for playlist_id in playlist_ids if playlist_id not in playlists]
+        if missing:
+            raise PlaylistAutomationError(
+                "Some selected playlists are no longer available to the connected Spotify account. "
+                "Refresh the playlist list and select them again."
+            )
         sort_enabled = bool(body.get("sort_enabled", True))
         rules = body.get("sort_rules") or DEFAULT_SORT_RULES
         dupe_enabled = bool(body.get("dupes_enabled", body.get("deduplicate", False)))
@@ -765,8 +778,6 @@ class PlaylistAutomation:
         results: list[dict[str, Any]] = []
         for playlist_id in playlist_ids:
             playlist = playlists.get(playlist_id)
-            if not playlist:
-                continue
             original = self.playlist_tracks(playlist_id)
             working = list(original)
             changes: list[dict[str, Any]] = []

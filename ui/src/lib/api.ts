@@ -631,22 +631,27 @@ export async function scanPlaylistAutomation(
 export async function scanSelectedPlaylistsForSorting(
   payload: Record<string, unknown>,
 ): Promise<PlaylistSortPreview[]> {
-  try {
-    const res = await request("/playlist-automation/sort/scan", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok)
-      throw new Error(
-        (await res.json().catch(() => ({}))).detail ||
-          "Failed to scan playlists for sorting",
-      );
-    const data = await res.json();
-    return Array.isArray(data.playlists) ? data.playlists : [];
-  } catch (err) {
-    console.error("Scan selected playlists failed:", err);
-    return [];
+  const res = await request("/playlist-automation/sort/scan", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      typeof data.detail === "string"
+        ? data.detail
+        : `Failed to scan playlists for sorting (${res.status})`,
+    );
   }
+  if (!Array.isArray(data.playlists)) {
+    throw new Error("The server returned an invalid playlist scan response.");
+  }
+  if (data.playlists.length === 0) {
+    throw new Error(
+      "The server returned no playlist scan results. Refresh the playlist list and try again.",
+    );
+  }
+  return data.playlists;
 }
 
 export async function applySelectedPlaylistSorting(

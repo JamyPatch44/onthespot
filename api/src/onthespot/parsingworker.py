@@ -137,20 +137,33 @@ class ParsingWorker:
     # Individual expansion handlers
     # ------------------------------------------------------------------
     def _get_active_profile(self):
-        profiles = config.get("download_profiles", []) or []
+        profiles = [
+            profile
+            for profile in (config.get("download_profiles", []) or [])
+            if isinstance(profile, dict)
+        ]
         active_id = config.get("active_download_profile", "mp3-320")
         profile = next((entry for entry in profiles if entry.get("id") == active_id), None)
         if profile is None and profiles:
             profile = profiles[0]
         if not profile:
-            return
-        download_profile = DownloadProfile(
-            id=profile.get("id"),
-            name=profile.get("name", profile.get("id", "mp3-320")),
-            format=profile.get("format", "mp3"),
-            bitrate=profile.get("bitrate", 320),
+            # Existing Docker configs can explicitly contain an empty profile
+            # list, which takes precedence over the packaged defaults. QueueItem
+            # requires a profile, so keep URL downloads usable with the normal
+            # application default until the user configures one again.
+            profile = {
+                "id": "mp3-320",
+                "name": "MP3 · 320 kbps",
+                "format": "mp3",
+                "bitrate": 320,
+            }
+        return DownloadProfile(
+            id=profile.get("id") or "mp3-320",
+            name=profile.get("name") or profile.get("id") or "MP3 · 320 kbps",
+            format=profile.get("format") or "mp3",
+            bitrate=profile.get("bitrate") or 320,
+            download_path=profile.get("download_path") or "",
         )
-        return download_profile
 
     def _enqueue_single_item(self, service, item_type, item_id, item_url=""):
         local_id = format_local_id(item_id)
