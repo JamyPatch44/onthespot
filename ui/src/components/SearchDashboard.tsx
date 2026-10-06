@@ -40,8 +40,8 @@ export const SearchDashboard: React.FC<SearchDashboardProps> = ({
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [queuedIds, setQueuedIds] = useState<Set<string>>(new Set());
 
-  const handleSearchSubmit = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
     const filterMap: Record<string, boolean> = {};
     if (selectedType !== "all") {
       filterMap[selectedType] = true;
@@ -89,7 +89,6 @@ export const SearchDashboard: React.FC<SearchDashboardProps> = ({
                 placeholder="Search tracks, artists, albums, or paste a Spotify, Deezer, Tidal, Apple Music URL..."
                 value={query}
                 onChange={(val) => setQuery(val)}
-                onEnter={handleSearchSubmit}
                 hasClear={true}
                 size="md"
                 startIcon={<Search className="w-4 h-4 text-neutral-400" />}
