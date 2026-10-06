@@ -47,6 +47,74 @@ class PlaylistVersionScopeTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in candidates], ["same-artist"])
         self.assertIn("artist:target artist", requests[0][2])
 
+    def test_artist_only_excludes_compilations_and_other_album_artists(self):
+        results = [
+            {
+                "id": "artist-compilation",
+                "name": "Signal",
+                "artists": [{"name": "Target Artist", "id": "target-artist"}],
+                "album": {
+                    "name": "Dance Anthems",
+                    "album_type": "compilation",
+                    "artists": [{"name": "Various Artists", "id": "various"}],
+                },
+            },
+            {
+                "id": "other-album-artist",
+                "name": "Signal",
+                "artists": [{"name": "Target Artist", "id": "target-artist"}],
+                "album": {
+                    "name": "Festival Hits",
+                    "album_type": "album",
+                    "artists": [
+                        {"name": "Various Artists", "id": "various"},
+                        {"name": "Target Artist", "id": "target-artist"},
+                    ],
+                },
+            },
+            {
+                "id": "artist-album",
+                "name": "Signal",
+                "artists": [{"name": "Target Artist", "id": "target-artist"}],
+                "album": {
+                    "name": "Signal",
+                    "album_type": "album",
+                    "artists": [{"name": "Target Artist", "id": "target-artist"}],
+                },
+            },
+        ]
+        self.track["artist_ids"] = ["target-artist"]
+        self.service._request = lambda *_args, **_kwargs: {
+            "tracks": {"items": results}
+        }
+
+        candidates = self.service._version_candidates(
+            self.track, "Artist Only: Oldest Version"
+        )
+
+        self.assertEqual([item["id"] for item in candidates], ["artist-album"])
+
+    def test_global_search_keeps_compilation_candidates(self):
+        compilation = {
+            "id": "artist-compilation",
+            "name": "Signal",
+            "artists": [{"name": "Target Artist", "id": "target-artist"}],
+            "album": {
+                "name": "Dance Anthems",
+                "album_type": "compilation",
+                "artists": [{"name": "Various Artists", "id": "various"}],
+            },
+        }
+        self.service._request = lambda *_args, **_kwargs: {
+            "tracks": {"items": [compilation]}
+        }
+
+        candidates = self.service._version_candidates(
+            self.track, "Global: Oldest Version"
+        )
+
+        self.assertEqual([item["id"] for item in candidates], ["artist-compilation"])
+
     def test_global_search_can_include_other_artists_with_matching_title(self):
         requests = []
 

@@ -1993,8 +1993,8 @@ export const PlaylistAutomationPage: React.FC<PlaylistAutomationPageProps> = ({ 
             <strong className="block text-[var(--spotify-green)]">Version replacement</strong>
             <p className="mt-2">Find alternative versions of tracks—such as remasters and remixes—and replace them after review.</p>
             <p className="mt-2">
-              <strong className="text-white">Artist Only:</strong> search for versions by the same artist.{" "}
-              <strong className="text-white">Global:</strong> search all of Spotify for alternatives.
+              <strong className="text-white">Artist Only:</strong> match the same track artist and exclude compilation or other-artist albums.{" "}
+              <strong className="text-white">Global:</strong> search all of Spotify, including compilation releases.
             </p>
             <p className="mt-2">
               <strong className="text-white">Oldest Version:</strong> prefer the original or earliest release.{" "}

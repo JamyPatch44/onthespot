@@ -397,14 +397,31 @@ class PlaylistAutomation:
     def _track_from_payload(track: dict[str, Any], added_at: str = "") -> dict[str, Any]:
         album = track.get("album") or {}
         artists = track.get("artists") or []
+        album_artists = album.get("artists") or []
         return {
             "id": track.get("id", ""),
             "uri": track.get("uri", ""),
             "is_local": bool(track.get("is_local")),
             "name": track.get("name", ""),
             "artist": ", ".join(str(artist.get("name", "")) for artist in artists),
+            "artist_names": [
+                str(artist.get("name", "")) for artist in artists if artist.get("name")
+            ],
+            "artist_ids": [
+                str(artist.get("id", "")) for artist in artists if artist.get("id")
+            ],
             "album": album.get("name", ""),
-            "album_artist": ", ".join(str(artist.get("name", "")) for artist in (album.get("artists") or [])),
+            "album_artist": ", ".join(str(artist.get("name", "")) for artist in album_artists),
+            "album_artist_names": [
+                str(artist.get("name", ""))
+                for artist in album_artists
+                if artist.get("name")
+            ],
+            "album_artist_ids": [
+                str(artist.get("id", ""))
+                for artist in album_artists
+                if artist.get("id")
+            ],
             "album_type": album.get("album_type", ""),
             "release_date": album.get("release_date") or "",
             "track_number": track.get("track_number", 0),
@@ -716,7 +733,40 @@ class PlaylistAutomation:
 
     @classmethod
     def _primary_artist(cls, track: dict[str, Any]) -> str:
+        artist_names = track.get("artist_names") or []
+        if artist_names:
+            return str(artist_names[0]).strip().casefold()
         return str(track.get("artist", "")).split(",", 1)[0].strip().casefold()
+
+    @classmethod
+    def _is_artist_only_candidate(
+        cls, source: dict[str, Any], candidate: dict[str, Any]
+    ) -> bool:
+        source_artist_ids = source.get("artist_ids") or []
+        candidate_artist_ids = candidate.get("artist_ids") or []
+        if source_artist_ids and candidate_artist_ids:
+            if str(source_artist_ids[0]) != str(candidate_artist_ids[0]):
+                return False
+        elif cls._primary_artist(source) != cls._primary_artist(candidate):
+            return False
+
+        if str(candidate.get("album_type") or "").casefold() == "compilation":
+            return False
+
+        album_artist_ids = candidate.get("album_artist_ids") or []
+        album_artist_names = candidate.get("album_artist_names") or []
+        album_artist_keys = {
+            str(name).strip().casefold() for name in album_artist_names
+        }
+        if "various artists" in album_artist_keys:
+            return False
+        if album_artist_ids and source_artist_ids:
+            return str(source_artist_ids[0]) == str(album_artist_ids[0])
+        if album_artist_names:
+            primary_album_artist = str(album_artist_names[0]).strip().casefold()
+            return cls._primary_artist(source) == primary_album_artist
+        # Older or partial Spotify payloads may omit album-artist metadata.
+        return True
 
     @classmethod
     def _duplicate_key(cls, track: dict[str, Any]) -> str:
@@ -741,7 +791,6 @@ class PlaylistAutomation:
             query += f" artist:{self._primary_artist(track)}"
         payload = self._request("GET", "/search", params={"q": query, "type": "track", "limit": 20})
         title_key = self._version_title_key(str(track.get("name", "")))
-        artist_key = self._primary_artist(track)
         candidates: list[dict[str, Any]] = []
         for raw in ((payload.get("tracks") or {}).get("items") or []):
             candidate = self._track_from_payload(raw)
@@ -749,7 +798,7 @@ class PlaylistAutomation:
                 continue
             if self._version_title_key(str(candidate.get("name", ""))) != title_key:
                 continue
-            if not global_search and self._primary_artist(candidate) != artist_key:
+            if not global_search and not self._is_artist_only_candidate(track, candidate):
                 continue
             candidates.append(candidate)
         return candidates
