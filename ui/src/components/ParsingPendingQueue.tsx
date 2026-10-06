@@ -68,8 +68,8 @@ export const ParsingPendingQueue: React.FC<ParsingPendingQueueProps> = ({
 
 
 
-  const handleParseSubmit = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
+  const handleParseSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!inputUrl.trim()) return;
 
     setIsSubmitting(true);
@@ -217,7 +217,6 @@ export const ParsingPendingQueue: React.FC<ParsingPendingQueueProps> = ({
                 placeholder="Paste Spotify, Deezer, Tidal, Apple Music, YouTube album, playlist, or track URL..."
                 value={inputUrl}
                 onChange={(val) => setInputUrl(val)}
-                onEnter={handleParseSubmit}
                 hasClear={true}
                 size="md"
                 startIcon={<FileSearch className="w-4 h-4 text-neutral-400" />}
@@ -226,11 +225,11 @@ export const ParsingPendingQueue: React.FC<ParsingPendingQueueProps> = ({
 
             <div className="flex items-center gap-2 shrink-0">
               <Button
+                type="submit"
                 variant="primary"
                 size="md"
                 label={isSubmitting ? "Submitting..." : "Start Parsing"}
                 icon={<Sparkles className="w-4 h-4" />}
-                onClick={handleParseSubmit}
                 isDisabled={!inputUrl.trim() || isSubmitting}
                 id="btn-submit-parse-url"
               />
