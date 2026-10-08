@@ -3141,9 +3141,25 @@ export const PlaylistAutomationPage: React.FC<PlaylistAutomationPageProps> = ({ 
                           }
                         />
                         <div className="min-w-0 flex-1">
+                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                            <p
+                              className={
+                                change.type === "duplicate"
+                                  ? "text-xs font-bold uppercase tracking-wide text-[var(--ots-warning)]"
+                                  : "text-xs font-bold uppercase tracking-wide text-[#c88cff]"
+                              }
+                            >
+                              {change.type === "duplicate" ? "Duplicate removal" : "Version replacement"}
+                            </p>
+                            <p
+                              className="max-w-full truncate border border-[var(--ots-border)] px-2 py-1 text-xs text-[#b3b3b3]"
+                              title={`Playlist: ${preview.name}`}
+                            >
+                              Playlist: <span className="font-semibold">{preview.name}</span>
+                            </p>
+                          </div>
                           {change.type === "duplicate" ? (
                             <>
-                              <p className="text-xs font-bold uppercase tracking-wide text-[var(--ots-warning)]">Duplicate removal</p>
                               <p className="mt-1 font-semibold text-[#ff8b8b]">Remove: {change.remTitle}</p>
                               <p className="mt-1 text-sm text-[#b3b3b3]">
                                 {change.remArtist}
@@ -3153,7 +3169,6 @@ export const PlaylistAutomationPage: React.FC<PlaylistAutomationPageProps> = ({ 
                             </>
                           ) : (
                             <>
-                              <p className="text-xs font-bold uppercase tracking-wide text-[#c88cff]">Version replacement</p>
                               <div className="mt-2 grid gap-2 md:grid-cols-[1fr_auto_1fr]">
                                 <div className="border border-[var(--ots-danger)]/50 bg-[var(--ots-danger)]/10 p-2">
                                   <p className="truncate font-semibold text-[#ff8b8b]">{change.remTitle}</p>
